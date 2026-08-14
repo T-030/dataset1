@@ -66,6 +66,12 @@ public class AccountServiceImpl implements AccountService {
         Account account = AccountMapper.INSTANCE.convertToSaveAccount(accountSaveRequest);
         this.accountRepository.save(account);
 
+        /*
+        // Giả lập Lỗi 3: Bất Đồng Nhất Dữ Liệu Phân Tán (Distributed Data Inconsistency)
+        // Bản ghi Account đã lưu xuống DB thành công, nhưng hệ thống ném ngoại lệ giả lập lỗi kết nối/mạng ở bước sau
+        throw new RuntimeException("Mô phỏng lỗi hệ thống sau khi lưu DB");
+        */
+
         logProducer.sendToLog(prepareLogRequest(OperationType.POST,Messages.ACCOUNT_CREATED));
 
         return new SuccessDataResult<>(

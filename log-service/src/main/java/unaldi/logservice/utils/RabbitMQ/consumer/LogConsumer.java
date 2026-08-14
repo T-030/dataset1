@@ -25,6 +25,9 @@ public class LogConsumer {
         this.logRepository = logRepository;
     }
 
+    // Giả lập Lỗi 4: Nghẽn Hàng Đợi RabbitMQ (Queue Congestion/OOM)
+    // Để mô phỏng: Hãy comment dòng @RabbitListener bên dưới lại.
+    // Khi đó log-service vẫn chạy nhưng không bao giờ đọc tin nhắn, làm logs.queue bị đầy dần.
     @RabbitListener(queues = "${rabbitmq.logs.queue}")
     public void fetchLogAndSaveToMongoDB(LogResponse logResponse) {
         log.info(Messages.LOG_READ_QUEUE + " : {}", logResponse);

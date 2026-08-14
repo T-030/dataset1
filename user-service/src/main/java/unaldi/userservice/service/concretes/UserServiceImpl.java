@@ -60,6 +60,9 @@ public class UserServiceImpl implements UserService {
         );
     }
 
+    // Giả lập Lỗi 5: Lỗi Đồng Bộ Cache Redis (Cache Inconsistency)
+    // Để mô phỏng: Hãy đổi condition = "#result.success != false" thành condition = "false"
+    // hoặc comment cả 2 dòng @CachePut và @CacheEvict ở dưới lại. Khi đó, cập nhật DB thành công nhưng Redis cache không đổi.
     @CachePut(value = Caches.USER_CACHE, key = "#userUpdateRequest.id()", unless = "#result.success != true")
     @CacheEvict(value = Caches.USERS_CACHE, allEntries = true, condition = "#result.success != false")
     @Override
