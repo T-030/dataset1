@@ -1,3 +1,6 @@
+# master_catalog.yaml
+# Tổng quan toàn hệ thống Banking Microservices — khai báo system + danh sách component/resource/topic.
+# Mỗi component có file catalog-info chi tiết riêng trong thư mục của service đó.
 specVersion: vsf-idp.io/v2
 
 metadata:
@@ -9,19 +12,93 @@ spec:
   type: system
   id: banking-master-system
   name: Banking Microservices Master
-  description: Hệ thống ngân hàng vi dịch vụ giả lập giao dịch cơ bản
+  description: >-
+    Hệ thống ngân hàng vi dịch vụ giả lập giao dịch cơ bản, quản lý người dùng,
+    tài khoản, thẻ tín dụng, hóa đơn, ngân hàng và dịch vụ ghi log.
+
   owners:
     members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
-  # Danh sách đường dẫn đến các file catalog của từng service trong hệ thống
-  catalog_files:
-    - account-service/account-service-catalog.yaml
-    - api-gateway-service/api-gateway-service-catalog.yaml
-    - bank-service/bank-service-catalog.yaml
-    - credit-card-service/credit-card-service-catalog.yaml
-    - discovery-client-service/discovery-client-service-catalog.yaml
-    - invoice-service/invoice-service-catalog.yaml
-    - log-service/log-service-catalog.yaml
-    - user-service/user-service-catalog.yaml
+  review:
+    branch: "main"
+
+  # ── Danh sách component thuộc system ───────────────────────────────────────
+  components:
+    - id: user-service
+      type: service
+      port: 8081
+      base_path: /api/v1/users
+      catalog: user-service/user-service-catalog.yaml
+    - id: bank-service
+      type: service
+      port: 8082
+      base_path: /api/v1/banks
+      catalog: bank-service/bank-service-catalog.yaml
+    - id: credit-card-service
+      type: service
+      port: 8083
+      base_path: /api/v1/creditCards
+      catalog: credit-card-service/credit-card-service-catalog.yaml
+    - id: account-service
+      type: service
+      port: 8084
+      base_path: /api/v1/accounts
+      catalog: account-service/account-service-catalog.yaml
+    - id: invoice-service
+      type: service
+      port: 8085
+      base_path: /api/v1/invoices
+      catalog: invoice-service/invoice-service-catalog.yaml
+    - id: log-service
+      type: service
+      port: 8086
+      base_path: /api/v1/logs
+      catalog: log-service/log-service-catalog.yaml
+    - id: api-gateway-service
+      type: gateway
+      port: 8087
+      catalog: api-gateway-service/api-gateway-service-catalog.yaml
+    - id: discovery-client-service
+      type: other
+      port: 8761
+      catalog: discovery-client-service/discovery-client-service-catalog.yaml
+
+  # ── Hạ tầng / third-party ──────────────────────────────────────────────────
+  resources:
+    - id: postgres-db
+      ref: resource:banking/postgres-db
+      port: 5432
+      role: CSDL quan hệ (user, bank, credit-card, account, invoice)
+    - id: mongo
+      ref: resource:banking/mongo
+      port: 27017
+      role: CSDL NoSQL lưu trữ log
+    - id: redis-db
+      ref: resource:banking/redis-db
+      port: 6379
+      role: Cache lưu trữ thông tin tạm thời
+    - id: rabbitmq-log
+      ref: resource:banking/rabbitmq-log
+      ports: [5672, 15672]
+      role: Message broker truyền nhận log
+    - id: pg-admin
+      ref: resource:banking/pg-admin
+      port: 5050
+      role: UI quản lý PostgreSQL
+    - id: mongo-express
+      ref: resource:banking/mongo-express
+      port: 8088
+      role: UI quản lý MongoDB
+    - id: redis-insight
+      ref: resource:banking/redis-insight
+      port: 5540
+      role: UI quản lý Redis
+
+  # ── Hàng đợi / Kafka & RabbitMQ Topics ────────────────────────────────────
+  topics:
+    - id: logs.queue
+      ref: banking/logs.queue
+      producer: user-service, bank-service, credit-card-service, account-service, invoice-service
+      consumer: log-service
