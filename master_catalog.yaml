@@ -30,40 +30,40 @@ spec:
       type: service
       port: 8081
       base_path: /api/v1/users
-      catalog: user-service/user-service-catalog.yaml
+      catalog: user-service/catalog-info.yaml
     - id: bank-service
       type: service
       port: 8082
       base_path: /api/v1/banks
-      catalog: bank-service/bank-service-catalog.yaml
+      catalog: bank-service/catalog-info.yaml
     - id: credit-card-service
       type: service
       port: 8083
       base_path: /api/v1/creditCards
-      catalog: credit-card-service/credit-card-service-catalog.yaml
+      catalog: credit-card-service/catalog-info.yaml
     - id: account-service
       type: service
       port: 8084
       base_path: /api/v1/accounts
-      catalog: account-service/account-service-catalog.yaml
+      catalog: account-service/catalog-info.yaml
     - id: invoice-service
       type: service
       port: 8085
       base_path: /api/v1/invoices
-      catalog: invoice-service/invoice-service-catalog.yaml
+      catalog: invoice-service/catalog-info.yaml
     - id: log-service
       type: service
       port: 8086
       base_path: /api/v1/logs
-      catalog: log-service/log-service-catalog.yaml
+      catalog: log-service/catalog-info.yaml
     - id: api-gateway-service
       type: gateway
       port: 8087
-      catalog: api-gateway-service/api-gateway-service-catalog.yaml
+      catalog: api-gateway-service/catalog-info.yaml
     - id: discovery-client-service
       type: other
       port: 8761
-      catalog: discovery-client-service/discovery-client-service-catalog.yaml
+      catalog: discovery-client-service/catalog-info.yaml
 
   # ── Hạ tầng / third-party ──────────────────────────────────────────────────
   resources:
