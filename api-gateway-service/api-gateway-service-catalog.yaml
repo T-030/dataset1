@@ -1,0 +1,35 @@
+specVersion: vsf-idp.io/v2
+
+metadata:
+  domain: platform
+  system: banking-system
+  namespace: banking
+
+spec:
+  type: gateway
+  id: api-gateway-service
+  name: API Gateway Service
+  description: Spring Cloud Gateway acting as the single entry point for routing, filtering, and load balancing
+  owners:
+    members:
+      - user: emree.unaldi@gmail.com
+        role: techlead
+  review:
+    branch: "main"
+  topology:
+    - ref: system:banking/banking-system
+      reason: Component này là một phần của hệ thống banking-system
+    - ref: component:banking/discovery-client-service
+      reason: Gateway đăng ký và tìm kiếm các microservice khác qua Eureka
+    - ref: component:banking/user-service
+      reason: Định tuyến các yêu cầu /api/v1/users/**
+    - ref: component:banking/bank-service
+      reason: Định tuyến các yêu cầu /api/v1/banks/**
+    - ref: component:banking/credit-card-service
+      reason: Định tuyến các yêu cầu /api/v1/creditCards/**
+    - ref: component:banking/account-service
+      reason: Định tuyến các yêu cầu /api/v1/accounts/**
+    - ref: component:banking/invoice-service
+      reason: Định tuyến các yêu cầu /api/v1/invoices/**
+    - ref: component:banking/log-service
+      reason: Định tuyến các yêu cầu /api/v1/logs/**

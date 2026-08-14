@@ -1,0 +1,32 @@
+specVersion: vsf-idp.io/v2
+
+metadata:
+  domain: banking
+  system: banking-system
+  namespace: banking
+
+spec:
+  type: service
+  id: user-service
+  name: User Service
+  description: Service handling user profiles and transactions
+  owners:
+    members:
+      - user: emree.unaldi@gmail.com
+        role: techlead
+  review:
+    branch: "main"
+  topology:
+    - ref: system:banking/banking-system
+      reason: Component này là một phần của hệ thống banking-system
+    - ref: component:banking/discovery-client-service
+      reason: Đăng ký dịch vụ với Eureka Server
+    - ref: resource:banking/postgres-db
+      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin người dùng
+    - ref: resource:banking/redis-db
+      reason: Redis cache cho thông tin người dùng
+    - ref: resource:banking/rabbitmq-log
+      reason: RabbitMQ broker dùng để gửi log
+    - ref: publishesTo:banking/logs.queue
+      protocol: rabbitmq
+      reason: Gửi các log hoạt động đến hàng đợi logs.queue

@@ -1,0 +1,38 @@
+specVersion: vsf-idp.io/v2
+
+metadata:
+  domain: banking
+  system: banking-system
+  namespace: banking
+
+spec:
+  type: service
+  id: credit-card-service
+  name: Credit Card Service
+  description: Service handling credit cards and credit transactions
+  owners:
+    members:
+      - user: emree.unaldi@gmail.com
+        role: techlead
+  review:
+    branch: "main"
+  topology:
+    - ref: system:banking/banking-system
+      reason: Component này là một phần của hệ thống banking-system
+    - ref: component:banking/discovery-client-service
+      reason: Đăng ký dịch vụ với Eureka Server
+    - ref: resource:banking/postgres-db
+      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin thẻ tín dụng và nợ
+    - ref: resource:banking/redis-db
+      reason: Redis cache cho thông tin thẻ tín dụng
+    - ref: resource:banking/rabbitmq-log
+      reason: RabbitMQ broker dùng để gửi log
+    - ref: publishesTo:banking/logs.queue
+      protocol: rabbitmq
+      reason: Gửi các log hoạt động đến hàng đợi logs.queue
+    - ref: consumesApis:banking/user-service
+      protocol: REST
+      reason: FeignClient gọi user-service để lấy thông tin user
+    - ref: consumesApis:banking/bank-service
+      protocol: REST
+      reason: FeignClient gọi bank-service để lấy thông tin ngân hàng

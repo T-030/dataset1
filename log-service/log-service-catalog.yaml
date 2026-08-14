@@ -1,0 +1,30 @@
+specVersion: vsf-idp.io/v2
+
+metadata:
+  domain: platform
+  system: banking-system
+  namespace: banking
+
+spec:
+  type: service
+  id: log-service
+  name: Log Service
+  description: Service consuming log messages from RabbitMQ and saving them to MongoDB
+  owners:
+    members:
+      - user: emree.unaldi@gmail.com
+        role: techlead
+  review:
+    branch: "main"
+  topology:
+    - ref: system:banking/banking-system
+      reason: Component này là một phần của hệ thống banking-system
+    - ref: component:banking/discovery-client-service
+      reason: Đăng ký dịch vụ với Eureka Server
+    - ref: resource:banking/mongo
+      reason: MongoDB lưu trữ logs nhận được từ các service khác
+    - ref: resource:banking/rabbitmq-log
+      reason: RabbitMQ broker dùng để nhận log
+    - ref: consumesFrom:banking/logs.queue
+      protocol: rabbitmq
+      reason: Nhận logs được gửi đến hàng đợi logs.queue từ các service khác

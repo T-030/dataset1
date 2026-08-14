@@ -1,0 +1,32 @@
+specVersion: vsf-idp.io/v2
+
+metadata:
+  domain: banking
+  system: banking-system
+  namespace: banking
+
+spec:
+  type: service
+  id: bank-service
+  name: Bank Service
+  description: Service handling banking branches and details
+  owners:
+    members:
+      - user: emree.unaldi@gmail.com
+        role: techlead
+  review:
+    branch: "main"
+  topology:
+    - ref: system:banking/banking-system
+      reason: Component này là một phần của hệ thống banking-system
+    - ref: component:banking/discovery-client-service
+      reason: Đăng ký dịch vụ với Eureka Server
+    - ref: resource:banking/postgres-db
+      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin ngân hàng và chi nhánh
+    - ref: resource:banking/redis-db
+      reason: Redis cache cho thông tin ngân hàng
+    - ref: resource:banking/rabbitmq-log
+      reason: RabbitMQ broker dùng để gửi log
+    - ref: publishesTo:banking/logs.queue
+      protocol: rabbitmq
+      reason: Gửi các log hoạt động đến hàng đợi logs.queue

@@ -1,0 +1,21 @@
+specVersion: vsf-idp.io/v2
+
+metadata:
+  domain: platform
+  system: banking-system
+  namespace: banking
+
+spec:
+  type: service
+  id: discovery-client-service
+  name: Discovery Client Service
+  description: Eureka Server for service registration and discovery
+  owners:
+    members:
+      - user: emree.unaldi@gmail.com
+        role: techlead
+  review:
+    branch: "main"
+  topology:
+    - ref: system:banking/banking-system
+      reason: Component này là một phần của hệ thống banking-system

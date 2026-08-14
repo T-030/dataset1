@@ -1,0 +1,27 @@
+specVersion: vsf-idp.io/v2
+
+metadata:
+  domain: banking
+  system: banking-system
+  namespace: banking
+
+spec:
+  type: system
+  id: banking-master-system
+  name: Banking Microservices Master
+  description: Hệ thống ngân hàng vi dịch vụ giả lập giao dịch cơ bản
+  owners:
+    members:
+      - user: emree.unaldi@gmail.com
+        role: techlead
+
+  # Danh sách đường dẫn đến các file catalog của từng service trong hệ thống
+  catalog_files:
+    - account-service/account-service-catalog.yaml
+    - api-gateway-service/api-gateway-service-catalog.yaml
+    - bank-service/bank-service-catalog.yaml
+    - credit-card-service/credit-card-service-catalog.yaml
+    - discovery-client-service/discovery-client-service-catalog.yaml
+    - invoice-service/invoice-service-catalog.yaml
+    - log-service/log-service-catalog.yaml
+    - user-service/user-service-catalog.yaml

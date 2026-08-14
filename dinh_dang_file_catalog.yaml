@@ -1,0 +1,151 @@
+# docs/idp/idp-core-admin/catalog-info.yaml
+# IDP Core Admin API — giao diện portal dành cho Platform/DevOps team
+# Các chức năng: catalog, spec review, lifecycle, release, IAM publish, audit
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration.
+# Giá trị cố định: vsf-idp.io/v2
+specVersion: vsf-idp.io/v2
+
+metadata:
+  # domain — tên domain nghiệp vụ / P&L chủ quản component này. Free-text, do Biz đặt.
+  # Cho phép: spaces, chữ hoa, ký tự đặc biệt printable. Tối đa 128 ký tự. KHÔNG có control characters.
+  # Dùng làm label phân loại trên Portal (không tham gia vào service_key hay permission code).
+  # Ví dụ: "Platform Engineering" | "Payment & Loyalty" | "Identity"
+  domain: platform  # require. -> table: service.domain_code (VARCHAR 128)
+
+  # system — hệ thống (bounded context) mà component thuộc về.
+  # Kết hợp với spec.id tạo thành service_key = "{system}.{spec.id}" — định danh bất biến.
+  # Format: ^[a-z][a-z0-9-]*$  — bắt đầu bằng chữ thường, chỉ gồm [a-z0-9-]. KHÔNG có spaces/chữ hoa.
+  # Ví dụ: idp-core | iam | vsf-payment
+  system: idp-core  # require. -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope của component.
+  # Dùng làm segment đầu của permission code: "{namespace}.{service_id}.{resource}.{action}.perm".
+  # Format: ^[a-z][a-z0-9-]*$  — bắt đầu bằng chữ thường, chỉ gồm [a-z0-9-]. KHÔNG có spaces/chữ hoa.
+  # Ví dụ: idp | iam | commerce
+  namespace: idp  # require -> table: service.namespace
+
+spec:
+  # type — loại component khai báo.
+  #
+  # Có API surface → trigger spec ingest + review workflow:
+  #   service       → binary HTTP/gRPC API            (cần registry.yaml + openapi.yaml)
+  #   gateway       → BFF hoặc API gateway layer      (cần registry.yaml + openapi.yaml)
+  #
+  # Không có API surface → chỉ track trong catalog:
+  #   worker        → background consumer/scheduler   (chỉ catalog-info.yaml)
+  #   batch         → one-shot/cron job               (chỉ catalog-info.yaml)
+  #   job           → alias của batch (Backstage compat)  (chỉ catalog-info.yaml)
+  #   library       → shared library/SDK dùng lại     (chỉ catalog-info.yaml)
+  #   website       → frontend web app / SPA           (chỉ catalog-info.yaml)
+  #   mobile-app    → ứng dụng di động iOS/Android     (chỉ catalog-info.yaml)
+  #   data-pipeline → ETL / CDC / stream pipeline      (chỉ catalog-info.yaml)
+  #   function      → serverless function              (chỉ catalog-info.yaml)
+  #   plugin        → plugin hoặc module mở rộng       (chỉ catalog-info.yaml)
+  #   tool          → công cụ nội bộ / CLI             (chỉ catalog-info.yaml)
+  #   documentation → trang tài liệu / docs site       (chỉ catalog-info.yaml)
+  #   other         → loại chưa được chuẩn hóa         (chỉ catalog-info.yaml)
+  type: service   # require -> table: service.service_type
+
+  # id — định danh duy nhất của component trong system.
+  # Kết hợp với metadata.system tạo thành service_key = "{system}.{id}".
+  # Format: ^[a-z][a-z0-9-]*$  — bắt đầu bằng chữ thường, chỉ gồm [a-z0-9-]. KHÔNG có spaces/chữ hoa.
+  # Phải nhất quán với field service trong registry.yaml.
+  id: idp-core-admin  # require -> table: service.service_key ({system}.{id})
+
+  # name — tên hiển thị trên IDP Portal (human-readable, free-text).
+  # Cho phép: spaces, chữ hoa, ký tự đặc biệt. KHÔNG được chứa control characters (U+0000–001F, DEL).
+  name: IDP Core Admin API  # require -> table: service.name
+
+  # description — mô tả ngắn về component, hiển thị trên trang Service Metadata trong Portal.
+  # Tuỳ chọn, không bắt buộc.
+  description: IDP Core Admin API - portal for Platform/DevOps team  # optional -> table: service.description
+
+  owners:
+    members:  # require at least 1 member techlead -> table: service_member
+      # user  — email VinSmart của người sở hữu.
+      # role  — vai trò trong team:
+      #   techlead   → tech lead / primary owner, người quyết định kiến trúc
+      #   maintainer → người maintain code/on-call, nhận alert
+      #   member → đóng góp nhưng không chịu trách nhiệm on-call
+      - user: v.kiennd17@vinsmartfuture.tech
+        role: techlead
+      - user: v.hadt191@vinsmartfuture.tech
+        role: techlead
+      - user: v.daonq2@vinsmartfuture.tech
+        role: techlead
+      - user: v.tiennq16@vinsmartfuture.tech
+        role: member
+  # review — cấu hình spec-review merge gate cho API của component này.
+  # branch: nhánh đích (destination/target branch) mà merge request phải qua IDP
+  #   spec review + approve trước khi merge. Ở MR mode, ingest TỪ CHỐI (422) nếu
+  #   target_branch của MR khác giá trị này — BỔ SUNG cho kiểm tra "branch đích là
+  #   protected" lấy từ OIDC id token; CẢ HAI phải đúng. Khớp tên nhánh chính xác.
+  review:
+    branch: "main"  # require để validate merge request
+
+  # topology — danh sách phụ thuộc của component này. IDP Portal dùng để render
+  # dependency graph và bảng UPSTREAM / DOWNSTREAM trong tab Dependencies.
+  #
+  # Mỗi entry là object với các field:
+  #   ref      (bắt buộc) — "{kind}:{namespace}/{name}"
+  #   protocol (tuỳ chọn) — giao thức giao tiếp: REST | gRPC | Kafka | WebSocket | …
+  #   reason   (tuỳ chọn) — mô tả ngắn lý do phụ thuộc, hiển thị cột REASON trên Portal
+  #
+  # Các kind được hỗ trợ trong ref:
+  #   system:        — system mà component NÀY thuộc về → sinh quan hệ partOf / hasPart trên graph (direction: partOf)
+  #   resource:      — tài nguyên hạ tầng (database, queue, bucket, secret-store…) (direction: partOf)
+  #   component:     — component khác trong IDP (service, worker, gateway…)  (direction: partOf)
+  #   providesApis:  — API mà component NÀY expose ra ngoài (khai báo trong registry.yaml) (direction
+  
+  : upstream)
+  #   consumesApis:  — API của service khác mà component NÀY gọi vào (direction: downstream)
+  #   publishesTo:   — Kafka topic mà component NÀY publish event vào (direction: downstream)
+  #   consumesFrom:  — Kafka topic mà component NÀY consume event từ  (direction: upstream)
+  #
+  # Namespace trong ref phải khớp với namespace của component/resource được tham chiếu,
+  # không nhất thiết phải là namespace của service hiện tại.
+  topology:   # optional, table -> service_dependency
+    # ── Membership ───────────────────────────────────────────────────────────
+    # partOf — khai báo component này thuộc system nào.
+    # IDP Portal dùng để vẽ cạnh hasPart (system → component) / partOf (component → system)
+    # trên Relations graph. Phải khớp với metadata.system ở trên.
+    - ref: system:idp/idp-core  #table -> service_dependency.targer_ref
+      reason: Component này là một phần của system idp-core    # table -> service_dependency.reason
+
+    # ── Sibling components ────────────────────────────────────────────────────
+    - ref: component:idp/idp-core-integration
+      reason: Sibling CI/CD API — ghi catalog data, ingest_commit, spec_snapshot mà admin đọc để review
+    - ref: component:idp/idp-core-consumer
+      reason: Sibling consumer — nhận dispatch event từ outbox mà admin ghi, thực hiện IAM sync call
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
+    - ref: resource:idp/idp-core-postgres
+      reason: Primary datastore — lưu toàn bộ catalog, review, lifecycle, audit data
+    - ref: resource:platform/kafka
+      reason: Kafka broker — required for all publishesTo/consumesFrom topics.
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:idp/idp-core-admin
+      protocol: REST   # table -> service_dependency.protocol
+      reason: OpenAPI spec của chính service này — expose lên Portal UI.
+    - ref: consumesApis:iam/iam-api
+      protocol: REST
+      reason: Lấy user profile
+
+    # ── Kafka topics ──────────────────────────────────────────────────────────
+    # External topics — visible to other services on the platform
+    - ref: publishesTo:idp/idp.audit-events
+      protocol: kafka
+      reason: Publish audit log events (actor, action, entity, before/after) cho downstream consumers
+    - ref: consumesFrom:iam/iam.permission-sync
+      protocol: kafka
+      reason: Nhận thông báo khi IAM sync permission binding thành công để cập nhật trạng thái
+
+    # Internal dispatch topic — transactional outbox pattern.
+    # OutboxDispatcher (job chạy trong process này) scan bảng iam_sync_outbox
+    # và publish mỗi row thành một event; idp-core-consumer nhận và thực hiện IAM call.
+    - ref: publishesTo:idp/idp.iam-sync.dispatch
+      protocol: kafka
+      reason: Internal outbox dispatch — trigger idp-core-consumer thực hiện IAM sync call
