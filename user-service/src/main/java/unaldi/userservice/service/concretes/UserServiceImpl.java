@@ -72,6 +72,18 @@ public class UserServiceImpl implements UserService {
         }
 
         User user = UserMapper.INSTANCE.convertToUpdateUser(userUpdateRequest);
+        
+        /*
+        // Giả lập Lỗi Hiếm 4: Bám bẩn Cache Redis do Race Condition (Cache Stampede)
+        // Để mô phỏng: Hãy bỏ comment đoạn sleep dưới đây. Lúc này cache đã bị xóa ở annotation @CacheEvict trước khi vào method.
+        // Trong khi thread này đang ngủ 1 giây, hãy gửi request đọc GET /api/v1/users/{id} liên tục để ghi đè dữ liệu cũ vào cache.
+        try {
+            Thread.sleep(1000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        */
+
         this.userRepository.save(user);
 
         logProducer.sendToLog(prepareLogRequest(OperationType.PUT,Messages.USER_UPDATED));

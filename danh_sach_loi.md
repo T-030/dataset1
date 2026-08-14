@@ -1,6 +1,12 @@
-# Danh sách 10 Lỗi Hệ thống Thường gặp (Microservices)
+# Danh sách 20 Lỗi Hệ thống (Microservices)
 
-Dưới đây là chi tiết về 10 lỗi hệ thống phổ biến đối với kiến trúc của dự án hiện tại (Spring Boot, Eureka, Spring Cloud Gateway, Feign Client, PostgreSQL, MongoDB, Redis và RabbitMQ).
+Dưới đây là chi tiết về 10 lỗi cơ bản và 10 lỗi hiếm gặp trong kiến trúc dự án (Spring Boot, Eureka, Gateway, Redis, RabbitMQ, PostgreSQL, MongoDB).
+
+> [!NOTE]
+> **Lưu ý phân loại lỗi và cách kích hoạt:**
+> 1. **Các lỗi thuộc về Cấu hình & Mã nguồn**: Đã được chèn sẵn mã giả lập hoặc cấu hình tắt (được comment lại) trực tiếp trong source code Java và file properties của dự án. Bạn chỉ cần bỏ comment các đoạn này để kích hoạt lỗi.
+> 2. **Các lỗi thuộc về tính chất mặc định của hệ thống**: Là các lỗi kiến trúc đang tồn tại sẵn trong mã nguồn hiện tại của dự án (như thiếu distributed tracing) mà không cần can thiệp.
+> 3. **Các lỗi thuộc về hạ tầng & lệnh quản trị mạng**: Đây là các lỗi liên quan đến runtime của Docker, sự cố vật lý hoặc kết nối mạng ngoài. Chúng không thể can thiệp bằng code Java của ứng dụng mà được ghi chú hướng dẫn giả lập từng bước thông qua các dòng lệnh CLI (Docker, RabbitMQ UI, mạng...) bên dưới từng mục tương ứng.
 
 ---
 
@@ -53,3 +59,57 @@ Dưới đây là chi tiết về 10 lỗi hệ thống phổ biến đối vớ
 * **Hiện tượng**: Tên các service được đăng ký trên Eureka bằng chữ thường (như `bank-service`) nhưng Feign Client hoặc cấu hình Gateway map tên bằng chữ hoa hoặc ngược lại mà không đồng nhất.
 * **Hậu quả**: Feign client báo lỗi `No instances available for bank-service` ngay cả khi service đang hoạt động bình thường, do cơ chế phân giải tên bị sai lệch cấu hình.
 * **Cách giả lập hiện tượng trong dự án này**: Đổi giá trị `spring.application.name` trong `user-service` thành `user-service-broken`. Eureka sẽ đăng ký service với tên mới, nhưng Feign client ở `account-service` vẫn cố tìm kiếm client có tên `@FeignClient(name = "user-service")`, dẫn đến lỗi không tìm thấy service instance.
+
+---
+
+# Danh sách 10 Lỗi Hệ thống Hiếm gặp (Rare/Edge Cases)
+
+### 1. Phân mảnh mạng (Split-Brain) ở Eureka Cluster
+* **Hiện tượng**: Khi triển khai cụm Eureka cluster, mạng bị phân mảnh cô lập các Eureka Server. Một số microservice đăng ký với Eureka-1, số khác đăng ký với Eureka-2.
+* **Hậu quả**: Hai Eureka Server không đồng bộ Registry. Gateway kết nối với Eureka-1 chỉ thấy một nửa số service và báo lỗi `503` hoặc `404` chập chờn khi gọi các service thuộc nửa bên kia.
+* **Cách giả lập hiện tượng trong dự án này**: Vì dự án đang chạy 1 instance Eureka nên để giả lập, ta dựng thêm Eureka-2 trong `docker-compose.yml` rồi ngắt kết nối mạng giữa 2 Eureka container bằng lệnh `docker network disconnect <network_name> <container_name>`.
+
+### 2. Trôi/Mất gói tin RabbitMQ âm thầm (TCP Silent Drop / Half-Open Connection)
+* **Hiện tượng**: Kết nối TCP giữa một service và RabbitMQ bị thiết bị mạng ở giữa cắt đứt một chiều (do idle lâu). Vì keep-alive lâu, service vẫn tiếp tục đẩy log qua RabbitMQ mà không nhận ra gói tin bị mất ở tầng mạng.
+* **Hậu quả**: Nghiệp vụ chính vẫn thành công nhưng không có log/event nào được lưu trong MongoDB của `log-service`.
+* **Cách giả lập hiện tượng trong dự án này**: Chạy lệnh `docker exec -it <rabbitmq_container> rabbitmqctl close_connection <connection_id> "Mô phỏng đứt mạng"` hoặc dùng iptables để chặn luồng mạng 5672 từ một service trong lúc đang chạy giao dịch ghi log.
+
+### 3. Starvation Connection Pool tại MongoDB
+* **Hiện tượng**: Hệ thống chịu tải lớn, `log-service` nhận quá nhiều log gửi về cùng lúc. Số lượng thread xử lý ghi vào MongoDB vượt quá kích thước Connection Pool tối đa.
+* **Hậu quả**: Các thread xử lý log của RabbitMQ Consumer bị treo để đợi connection sang MongoDB, gây ra nghẽn ngược (backpressure) làm treo consumer thread và làm tăng RAM của `log-service`.
+* **Cách giả lập hiện tượng trong dự án này**: Trong file `application.properties` của `log-service`, thay đổi URI connection thành `mongodb://unaldi:eu1189@mongo:27017/banking-microservices?authSource=admin&maxPoolSize=1` (giới hạn pool về 1 kết nối). Sau đó, chạy công cụ bắn tải log đồng thời từ nhiều service khác nhau để kích hoạt hàng loạt luồng ghi đè tranh chấp 1 connection duy nhất.
+
+### 4. Bám bẩn Cache Redis do Race Condition khi cập nhật (Cache Stampede)
+* **Hiện tượng**: Một luồng thực hiện xóa cache trên Redis để chuẩn bị cập nhật PostgreSQL. Ngay lập tức (trước khi DB ghi xong), một request đọc gửi tới, thấy cache trống nên truy vấn DB (lấy dữ liệu cũ) và ghi đè lại vào Redis.
+* **Hậu quả**: Dữ liệu trong Redis là dữ liệu cũ, dữ liệu trong DB là dữ liệu mới. Cache bị bẩn vĩnh viễn cho đến khi có lượt update tiếp theo hoặc hết hạn TTL.
+* **Cách giả lập hiện tượng trong dự án này**: Thêm `Thread.sleep(1000)` ngay trước dòng `this.userRepository.save(user);` trong `update` của `UserServiceImpl.java`. Trong lúc luồng update đang ngủ 1 giây, hãy liên tục gửi request lấy thông tin User qua API `GET /api/v1/users/{id}` để request đọc ghi ngược dữ liệu cũ lại vào Redis Cache.
+
+### 5. JVM Stop-The-World (GC Pause) làm Eureka hủy đăng ký nhầm
+* **Hiện tượng**: Một service (ví dụ `user-service`) gặp hiện tượng rò rỉ bộ nhớ hoặc xử lý tác vụ quá nặng làm JVM đóng băng để dọn rác (GC Pause). Thời gian đóng băng vượt quá thời gian heartbeat lease của Eureka.
+* **Hậu quả**: Eureka Server coi như instance này đã chết và xóa nó ra khỏi Registry. Khi GC xong, service hoạt động lại bình thường nhưng Gateway sẽ không gửi request tới nó nữa.
+* **Cách giả lập hiện tượng trong dự án này**: Sử dụng lệnh pause container `docker pause user-service` để mô phỏng JVM bị đóng băng hoàn toàn. Đợi quá 90 giây (thời gian thuê lease mặc định của Eureka), sau đó chạy `docker unpause user-service`. Eureka Server đã hủy đăng ký của service này mặc dù tiến trình Java trong container vẫn đang hoạt động lại bình thường.
+
+### 6. Khóa luồng RabbitMQ Consumer do "Poison Pill"
+* **Hiện tượng**: Một service thay đổi cấu trúc log gửi đi nhưng chưa cập nhật class nhận ở `log-service`. Khi một tin nhắn cấu trúc mới được gửi đi, Jackson Serializer ở đầu nhận không thể giải tuần tự hóa được đối tượng JSON này.
+* **Hậu quả**: RabbitMQ liên tục từ chối tin nhắn và đẩy ngược lại (re-queue) lên đầu hàng đợi. Nó tạo ra một vòng lặp vô hạn (Infinite Retry Loop) khiến CPU của `log-service` vọt lên 100% và không thể xử lý các log khác.
+* **Cách giả lập hiện tượng trong dự án này**: Gửi một message sai định dạng JSON hoặc có thuộc tính không thể parse sang class `LogResponse` trực tiếp từ giao diện quản trị RabbitMQ UI (cổng 15672) vào `logs.queue`.
+
+### 7. Deadlock tại Connection Pool HikariCP (Hikari Pool Deadlock)
+* **Hiện tượng**: Một phương thức cha `@Transactional` lấy ra Connection-1 từ Pool để chạy. Trong phương thức đó lại gọi một phương thức con có cấu hình `@Transactional(propagation = Propagation.REQUIRES_NEW)` (yêu cầu tạo kết nối mới Connection-2). Dưới tải cao, tất cả connection trong pool bị chiếm giữ bởi các luồng cha (đều giữ Connection-1), khiến luồng con không thể lấy Connection-2.
+* **Hậu quả**: Xảy ra hiện tượng nghẽn chéo (Deadlock) ở pool kết nối DB, ném ra lỗi Timeout từ HikariCP.
+* **Cách giả lập hiện tượng trong dự án này**: Tạo phương thức con được đánh dấu `@Transactional(propagation = Propagation.REQUIRES_NEW)` bên trong `AccountServiceImpl.java` và gọi nó từ một phương thức `@Transactional` cha. Giới hạn `spring.datasource.hikari.maximum-pool-size=1` trong cấu hình database để tạo deadlock ngay tức khắc khi chạy.
+
+### 8. Lỗi giữ IP cũ (Stale Registry IP) khi scale container
+* **Hiện tượng**: Khi scale-down hoặc redeploy container, container cũ bị tắt đi, container mới được cấp IP mới. Tuy nhiên, Eureka Server hoặc client load balancer cache chưa kịp cập nhật (mất 30s-90s).
+* **Hậu quả**: Gateway vẫn chuyển tiếp request đến IP cũ của container đã chết, tạo ra lỗi kết nối chập chờn cho người dùng cuối.
+* **Cách giả lập hiện tượng trong dự án này**: Triển khai scale service bằng lệnh `docker-compose up --scale user-service=2 -d`. Sau đó tắt đột ngột 1 instance bằng `docker kill`. Gọi liên tục API của `user-service` qua Gateway, bạn sẽ thấy lỗi `500` hoặc kết nối không thành công xảy ra xen kẽ trong khoảng 30 giây đầu tiên.
+
+### 9. Lỗi bất đồng bộ thứ tự xử lý log (Out-of-Order Log Events)
+* **Hiện tượng**: Nhiều luồng gửi log bất đồng bộ lên RabbitMQ. Do cơ chế xử lý song song và độ trễ mạng khác nhau, hành động xảy ra sau lại được ghi nhận và lưu trữ trước hành động xảy ra trước.
+* **Hậu quả**: Thứ tự log bị đảo lộn trên MongoDB, gây sai lệch thông tin phân tích lịch sử giao dịch.
+* **Cách giả lập hiện tượng trong dự án này**: Gửi liên tiếp 2 hành động Tạo và Xóa tài khoản người dùng ngay lập tức trong vòng 1-2 ms. Do RabbitMQ gửi bất đồng bộ và nhiều luồng tiêu thụ ở `log-service` chạy song song, sự kiện Xóa có thể được lưu trước sự kiện Tạo.
+
+### 10. Tràn bộ nhớ Gateway do rò rỉ RAM Netty
+* **Hiện tượng**: Spring Cloud Gateway sử dụng Netty để xử lý I/O bất đồng bộ. Khi có lượng request tải rất lớn truyền kèm theo các header hoặc body lớn, nếu bộ nhớ trực tiếp (Direct Memory) không được giải phóng kịp thời sẽ gây rò rỉ bộ nhớ.
+* **Hậu quả**: Bộ nhớ RAM vật lý của Gateway bị cạn kiệt dần cho đến khi hệ điều hành (hoặc Docker) tự động kill tiến trình Gateway.
+* **Cách giả lập hiện tượng trong dự án này**: Sử dụng một công cụ benchmark (như Apache Bench `ab` hoặc `k6`) để gửi liên tiếp các request HTTP có kích thước Payload (body hoặc header) rất lớn tới API Gateway nhằm làm tràn bộ nhớ đệm Direct Buffer của Netty.
