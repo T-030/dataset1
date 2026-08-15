@@ -53,14 +53,11 @@ public class UserController {
 
     @GetMapping("/{userId}")
     public ResponseEntity<DataResult<UserDTO>> findById(@PathVariable Long userId) {
-        /*
-        // Giả lập Lỗi 2: Lỗi Sụp Đổ Dây Chuyền (Cascading Failure)
         try {
-            Thread.sleep(10000); // Ngủ 10 giây để tạo độ trễ lớn
+            Thread.sleep(10000); // Ngủ 10 giây tạo độ trễ lớn gây Cascading Failure & Timeout
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        */
         return ResponseEntity
                 .status(HttpStatus.OK)
                 .body(this.userService.findById(userId));

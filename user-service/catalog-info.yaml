@@ -17,6 +17,43 @@ spec:
   review:
     branch: "main"
 
+  errors:
+    - id: ERR-USER-001
+      type: ServiceRegistrationError
+      target_config:
+        file: user-service/src/main/resources/application.properties
+        property: spring.application.name
+        value: user-service-broken
+
+    - id: ERR-USER-002
+      type: CascadingFailure
+      target_code:
+        file: user-service/src/main/java/unaldi/userservice/controller/UserController.java
+        method: findById
+        latency_ms: 10000
+
+    - id: ERR-USER-003
+      type: DatabasePoolExhaustion
+      target_config:
+        file: user-service/src/main/resources/application.properties
+        property: spring.datasource.hikari.maximum-pool-size
+        value: 1
+        connection_timeout_ms: 2000
+
+    - id: ERR-USER-004
+      type: CacheInconsistency
+      target_code:
+        file: user-service/src/main/java/unaldi/userservice/service/concretes/UserServiceImpl.java
+        method: update
+        cache_evict_condition: "false"
+
+    - id: ERR-USER-005
+      type: CachePollutionRaceCondition
+      target_code:
+        file: user-service/src/main/java/unaldi/userservice/service/concretes/UserServiceImpl.java
+        method: update
+        sleep_ms: 1000
+
   topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của hệ thống banking-system
