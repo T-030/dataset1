@@ -1,23 +1,21 @@
-specVersion: vsf-idp.io/v2
+# Danh Sách & Mô Tả Các Kịch Bản Lỗi Hệ Thống (Khai Báo Dạng YAML)
 
-metadata:
-  domain: banking
-  system: banking-system
-  namespace: banking
+Tài liệu này tổng hợp và mô tả chi tiết 5 kịch bản lỗi hệ thống (Fault Injection Spec) được khai báo dạng **YAML** trực tiếp trong file cấu hình catalog [`user-service/catalog-info.yaml`](file:///c:/Users/Admin/Data_Banking_14_8/user-service/catalog-info.yaml). 
 
+Mô hình phân tích (Model / Scanner) có thể đọc cấu hình YAML này để nhận diện toàn bộ 5 lỗi được tập trung tại **`user-service`**, trong khi các service còn lại giữ trạng thái khỏe mạnh (healthy).
+
+---
+
+## 1. Cấu Trúc Khai Báo Lỗi Dạng YAML trong `user-service/catalog-info.yaml`
+
+File [`user-service/catalog-info.yaml`](file:///c:/Users/Admin/Data_Banking_14_8/user-service/catalog-info.yaml) chứa khai báo chi tiết dưới mục `spec.errors`:
+
+```yaml
 spec:
   type: service
   id: user-service
   name: User Service
-  description: Service handling user profiles and transactions
-  owners:
-    members:
-      - user: emree.unaldi@gmail.com
-        role: techlead
-  review:
-    branch: "main"
 
-  # ── Danh sách 5 kịch bản lỗi hệ thống (Simulated Errors / Fault Injection Spec) ──
   errors:
     - id: ERR-USER-001
       type: ServiceRegistrationError
@@ -70,18 +68,28 @@ spec:
         file: user-service/src/main/java/unaldi/userservice/service/concretes/UserServiceImpl.java
         method: update
         fault_type: CacheStampedeSleep
+```
 
-  topology:
-    - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
-    - ref: component:banking/discovery-client-service
-      reason: Đăng ký dịch vụ với Eureka Server
-    - ref: resource:banking/postgres-db
-      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin người dùng
-    - ref: resource:banking/redis-db
-      reason: Redis cache cho thông tin người dùng
-    - ref: resource:banking/rabbitmq-log
-      reason: RabbitMQ broker dùng để gửi log
-    - ref: publishesTo:banking/logs.queue
-      protocol: rabbitmq
-      reason: Gửi các log hoạt động đến hàng đợi logs.queue
+---
+
+## 2. Chi Tiết 5 Kịch Bản Lỗi Khai Báo Trong YAML
+
+### 🔴 1. ERR-USER-001: ServiceRegistrationError
+- **File YAML**: [`user-service/catalog-info.yaml`](file:///c:/Users/Admin/Data_Banking_14_8/user-service/catalog-info.yaml)
+- **Tóm tắt**: Đổi `spring.application.name=user-service-broken`. Eureka không tìm thấy `user-service`.
+
+### 🔴 2. ERR-USER-002: CascadingFailure
+- **File YAML**: [`user-service/catalog-info.yaml`](file:///c:/Users/Admin/Data_Banking_14_8/user-service/catalog-info.yaml)
+- **Tóm tắt**: API `GET /api/v1/users/{userId}` phản hồi trễ 10.000ms gây Read Timeout lan truyền qua Feign Client sang các service khác (`account-service`, `credit-card-service`, `invoice-service`).
+
+### 🔴 3. ERR-USER-003: DatabasePoolExhaustion
+- **File YAML**: [`user-service/catalog-info.yaml`](file:///c:/Users/Admin/Data_Banking_14_8/user-service/catalog-info.yaml)
+- **Tóm tắt**: Cấu hình HikariCP `maximum-pool-size=1` và `connection-timeout=2000` làm cạn kiệt DB Connection Pool khi có từ 2 request gửi đồng thời.
+
+### 🔴 4. ERR-USER-004: CacheInconsistency
+- **File YAML**: [`user-service/catalog-info.yaml`](file:///c:/Users/Admin/Data_Banking_14_8/user-service/catalog-info.yaml)
+- **Tóm tắt**: `@CacheEvict` với `condition="false"` trong `UserServiceImpl.update()` khiến Redis Cache và PostgreSQL Database bị lệch dữ liệu.
+
+### 🔴 5. ERR-USER-005: CachePollutionRaceCondition
+- **File YAML**: [`user-service/catalog-info.yaml`](file:///c:/Users/Admin/Data_Banking_14_8/user-service/catalog-info.yaml)
+- **Tóm tắt**: Trì hoãn 1000ms trong hàm `update()` sau khi xóa cache khiến request đọc đồng thời ghi dữ liệu cũ chưa update ngược trở lại Redis Cache.
