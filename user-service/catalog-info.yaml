@@ -1,29 +1,15 @@
-# Catalog cấp hệ thống cho Banking Microservices.
-#
-# LƯU Ý VỀ `type`: lược đồ vsf-idp.io/v2 KHÔNG có giá trị `system` trong danh
-# sách type hợp lệ, nên `type: system` sẽ bị reject với mã INVALID_TYPE và cả
-# file bị bỏ qua. `other` là giá trị hợp lệ gần nghĩa nhất.
-# Hệ quả: file này được đếm như một component thứ 9 trên sơ đồ C1/C2. Nếu không
-# muốn vậy thì đổi tên file thành `SYSTEM.md` (hoặc bất cứ tên nào không nằm
-# trong danh sách catalog.yaml / catalog.yml / catalog-info.yaml /
-# master-catalog.yaml) để agent không parse nó như một catalog.
-
 specVersion: vsf-idp.io/v2
 
 metadata:
   domain: banking
   system: banking-system
-  # Nhãn cho chính HỆ THỐNG trên sơ đồ C1. Không khai thì C1 chỉ hiện slug
-  # `banking-system` và ô mô tả lùi về "N component".
-  system_name: Hệ thống Ngân hàng Vi dịch vụ
-  system_description: Cung cấp các dịch vụ cốt lõi — quản lý ngân hàng, tài khoản, thẻ tín dụng và hóa đơn
   namespace: banking
 
 spec:
-  type: other
-  id: banking-master-system
-  name: Banking Microservices Master
-  description: Hệ thống ngân hàng vi dịch vụ giả lập giao dịch cơ bản
+  type: service
+  id: user-service
+  name: User Service
+  description: Service handling user profiles and transactions
   owners:
     members:
       - user: emree.unaldi@gmail.com
@@ -33,50 +19,58 @@ spec:
 
   topology:
     - ref: system:banking/banking-system
-      reason: File chỉ mục cấp hệ thống của banking-system
-
-  # Tác nhân cấp bối cảnh — nguồn dữ liệu DUY NHẤT cho node người dùng ở C1.
-  # Không khai thì C1 không có node nào dạng 👤, và agent KHÔNG được tự thêm.
-  # `type`: person | external-system.
-  actors:
-    - id: banking-customer
-      name: Khách hàng Ngân hàng
-      type: person
-      description: Người dùng thực hiện các giao dịch mở tài khoản, thẻ tín dụng và truy vấn
-      relation: Sử dụng dịch vụ qua Web/App
-
-    # Mẫu để thêm tác nhân khác — bỏ comment và sửa lại cho đúng thực tế:
-    # - id: bank-operator
-    #   name: Nhân viên vận hành
-    #   type: person
-    #   description: Tra cứu log hệ thống và lịch sử giao dịch
-    #   relation: Tra cứu qua Log Service
-    # - id: core-banking
-    #   name: Core Banking (hệ thống ngoài)
-    #   type: external-system
-    #   description: Hệ thống lõi đối soát số dư cuối ngày
-    #   relation: Đối soát số dư [SFTP]
-
-  # Danh sách đường dẫn đến các file catalog của từng service trong hệ thống.
-  # Trường ngoài lược đồ — agent không đọc, giữ lại để người đọc tra cứu.
-  catalog_files:
-    - account-service/catalog-info.yaml
-    - api-gateway-service/catalog-info.yaml
-    - bank-service/catalog-info.yaml
-    - credit-card-service/catalog-info.yaml
-    - discovery-client-service/catalog-info.yaml
-    - invoice-service/catalog-info.yaml
-    - log-service/catalog-info.yaml
-    - user-service/catalog-info.yaml
-
-  # Hạ tầng dùng chung, khai ở đây để tra cứu (agent lấy từ topology của từng
-  # service, không đọc khối này).
-  shared_resources:
+      reason: Component này là một phần của hệ thống banking-system
+    - ref: component:banking/discovery-client-service
+      reason: Đăng ký dịch vụ với Eureka Server
     - ref: resource:banking/postgres-db
-      note: PostgreSQL · db banking-microservices · cổng 5433→5432
-    - ref: resource:banking/redis-db
-      note: Redis cache · cổng 6380→6379
-    - ref: resource:banking/rabbitmq-log
-      note: RabbitMQ 3.13 · cổng 5672 / 15672 · exchange logs.exchange
-    - ref: resource:banking/mongo
-      note: MongoDB · db banking-microservices · cổng 27018→27017
+      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin người dùng
+    - ref: providesApis:banking/user-service
+      protocol: REST
+      reason: API /api/v1/users cho gateway và các service khác gọi vào
+
+  components:
+    - id: user-controller
+      name: UserController
+      role: controller
+      tech: REST · /api/v1/users
+      calls:
+        - to: user-service-impl
+          reason: Ủy quyền toàn bộ nghiệp vụ
+
+    - id: user-service-impl
+      name: UserServiceImpl
+      role: service
+      tech: Spring @Service · @Cacheable/@CacheEvict
+      calls:
+        - to: user-repository
+          reason: Đọc/ghi bản ghi User
+        - to: user-mapper
+          reason: Chuyển Request/Entity/DTO
+        - to: log-producer
+          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
+        - to: resource:banking/redis-db
+          protocol: Spring Cache
+          reason: Cache users / user
+
+    - id: user-mapper
+      name: UserMapper
+      role: mapper
+      tech: MapStruct
+
+    - id: user-repository
+      name: UserRepository
+      role: repository
+      tech: Spring Data JPA
+      calls:
+        - to: resource:banking/postgres-db
+          protocol: JDBC
+          reason: Bảng user trong banking-microservices
+
+    - id: log-producer
+      name: LogProducer
+      role: producer
+      tech: Spring AMQP · logs.exchange
+      calls:
+        - to: publishesTo:banking/logs.queue
+          protocol: rabbitmq
+          reason: convertAndSend theo routingKey logs.routingKey
