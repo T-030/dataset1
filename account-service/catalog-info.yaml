@@ -16,6 +16,7 @@ spec:
         role: techlead
   review:
     branch: "main"
+
   topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của hệ thống banking-system
@@ -36,3 +37,73 @@ spec:
     - ref: consumesApis:banking/bank-service
       protocol: REST
       reason: FeignClient gọi bank-service để lấy thông tin ngân hàng
+
+  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+  components:
+    - id: account-controller
+      name: AccountController
+      role: controller
+      tech: REST · /api/v1/accounts
+      calls:
+        - to: account-service-impl
+          reason: Ủy quyền toàn bộ nghiệp vụ
+
+    - id: account-service-impl
+      name: AccountServiceImpl
+      role: service
+      tech: Spring @Service · @Cacheable/@CacheEvict
+      calls:
+        - to: account-repository
+          reason: Đọc/ghi bản ghi Account
+        - to: account-mapper
+          reason: Chuyển Request/Entity/DTO
+        - to: user-service-client
+          reason: Kiểm tra userId tồn tại trước khi lưu
+        - to: bank-service-client
+          reason: Kiểm tra bankId tồn tại trước khi lưu
+        - to: log-producer
+          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
+        - to: resource:banking/redis-db
+          protocol: Spring Cache
+          reason: Cache accounts / account / account-user / account-bank
+
+    - id: account-mapper
+      name: AccountMapper
+      role: mapper
+      tech: MapStruct
+
+    - id: account-repository
+      name: AccountRepository
+      role: repository
+      tech: Spring Data JPA
+      calls:
+        - to: resource:banking/postgres-db
+          protocol: JDBC
+          reason: Bảng account trong banking-microservices
+
+    - id: user-service-client
+      name: UserServiceClient
+      role: client
+      tech: OpenFeign · user-service:8081
+      calls:
+        - to: consumesApis:banking/user-service
+          protocol: REST
+          reason: GET /api/v1/users/{userId}
+
+    - id: bank-service-client
+      name: BankServiceClient
+      role: client
+      tech: OpenFeign · bank-service:8082
+      calls:
+        - to: consumesApis:banking/bank-service
+          protocol: REST
+          reason: GET /api/v1/banks/{bankId}
+
+    - id: log-producer
+      name: LogProducer
+      role: producer
+      tech: Spring AMQP · logs.exchange
+      calls:
+        - to: publishesTo:banking/logs.queue
+          protocol: rabbitmq
+          reason: convertAndSend theo routingKey logs.routingKey

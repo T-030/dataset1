@@ -16,6 +16,7 @@ spec:
         role: techlead
   review:
     branch: "main"
+
   topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của hệ thống banking-system
@@ -30,3 +31,51 @@ spec:
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
       reason: Gửi các log hoạt động đến hàng đợi logs.queue
+
+  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+  components:
+    - id: bank-controller
+      name: BankController
+      role: controller
+      tech: REST · /api/v1/banks
+      calls:
+        - to: bank-service-impl
+          reason: Ủy quyền toàn bộ nghiệp vụ
+
+    - id: bank-service-impl
+      name: BankServiceImpl
+      role: service
+      tech: Spring @Service · @Cacheable/@CacheEvict
+      calls:
+        - to: bank-repository
+          reason: Đọc/ghi bản ghi Bank
+        - to: bank-mapper
+          reason: Chuyển Request/Entity/DTO
+        - to: log-producer
+          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
+        - to: resource:banking/redis-db
+          protocol: Spring Cache
+          reason: Cache banks / bank
+
+    - id: bank-mapper
+      name: BankMapper
+      role: mapper
+      tech: MapStruct
+
+    - id: bank-repository
+      name: BankRepository
+      role: repository
+      tech: Spring Data JPA
+      calls:
+        - to: resource:banking/postgres-db
+          protocol: JDBC
+          reason: Bảng bank trong banking-microservices
+
+    - id: log-producer
+      name: LogProducer
+      role: producer
+      tech: Spring AMQP · logs.exchange
+      calls:
+        - to: publishesTo:banking/logs.queue
+          protocol: rabbitmq
+          reason: convertAndSend theo routingKey logs.routingKey

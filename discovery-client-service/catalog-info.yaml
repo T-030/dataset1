@@ -1,21 +1,32 @@
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: platform
+  domain: banking
   system: banking-system
   namespace: banking
 
 spec:
   type: service
-  id: discovery-client-service
-  name: Discovery Client Service
-  description: Eureka Server for service registration and discovery
+  id: client-application-service
+  name: Client Application Service
+  description: Dịch vụ tiếp nhận đơn vay của khách hàng, tải lên chứng từ và giao tiếp với OCR, Database, Commercial Service
   owners:
     members:
       - user: emree.unaldi@gmail.com
         role: techlead
   review:
     branch: "main"
+
   topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của hệ thống banking-system
+    - ref: component:banking/discovery-service
+      reason: Đăng ký dịch vụ với Eureka Server
+    - ref: component:banking/config-server
+      reason: Lấy cấu hình tập trung từ Config Server
+    - ref: component:banking/database-server-v2
+      reason: Gửi và lưu trữ dữ liệu hồ sơ đăng ký vay
+    - ref: component:banking/ocr-service
+      reason: Trích xuất dữ liệu từ các tài liệu do khách hàng tải lên
+    - ref: component:banking/commercial-service
+      reason: Chuyển thông tin đăng ký vay để đánh giá điều kiện ban đầu

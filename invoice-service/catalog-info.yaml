@@ -16,6 +16,7 @@ spec:
         role: techlead
   review:
     branch: "main"
+
   topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của hệ thống banking-system
@@ -33,3 +34,62 @@ spec:
     - ref: consumesApis:banking/user-service
       protocol: REST
       reason: FeignClient gọi user-service để lấy thông tin user
+
+  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+  components:
+    - id: invoice-controller
+      name: InvoiceController
+      role: controller
+      tech: REST · /api/v1/invoices
+      calls:
+        - to: invoice-service-impl
+          reason: Ủy quyền toàn bộ nghiệp vụ
+
+    - id: invoice-service-impl
+      name: InvoiceServiceImpl
+      role: service
+      tech: Spring @Service · @Cacheable/@CacheEvict
+      calls:
+        - to: invoice-repository
+          reason: Đọc/ghi bản ghi Invoice
+        - to: invoice-mapper
+          reason: Chuyển Request/Entity/DTO
+        - to: user-service-client
+          reason: Kiểm tra userId tồn tại trước khi lưu
+        - to: log-producer
+          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
+        - to: resource:banking/redis-db
+          protocol: Spring Cache
+          reason: Cache invoices / invoice / invoice-user
+
+    - id: invoice-mapper
+      name: InvoiceMapper
+      role: mapper
+      tech: MapStruct
+
+    - id: invoice-repository
+      name: InvoiceRepository
+      role: repository
+      tech: Spring Data JPA
+      calls:
+        - to: resource:banking/postgres-db
+          protocol: JDBC
+          reason: Bảng invoice trong banking-microservices
+
+    - id: user-service-client
+      name: UserServiceClient
+      role: client
+      tech: OpenFeign · user-service:8081
+      calls:
+        - to: consumesApis:banking/user-service
+          protocol: REST
+          reason: GET /api/v1/users/{userId}
+
+    - id: log-producer
+      name: LogProducer
+      role: producer
+      tech: Spring AMQP · logs.exchange
+      calls:
+        - to: publishesTo:banking/logs.queue
+          protocol: rabbitmq
+          reason: convertAndSend theo routingKey logs.routingKey

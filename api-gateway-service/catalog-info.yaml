@@ -16,6 +16,7 @@ spec:
         role: techlead
   review:
     branch: "main"
+
   topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của hệ thống banking-system
@@ -33,3 +34,69 @@ spec:
       reason: Định tuyến các yêu cầu /api/v1/invoices/**
     - ref: component:banking/log-service
       reason: Định tuyến các yêu cầu /api/v1/logs/**
+
+  # Gateway không có tầng controller/service/repository. "Component" ở đây là
+  # 6 route khai trong application.properties, cộng client discovery cho lb://.
+  components:
+    - id: discovery-client
+      name: EurekaDiscoveryClient
+      role: config
+      tech: "@EnableDiscoveryClient · lb://"
+      calls:
+        - to: component:banking/discovery-client-service
+          protocol: REST
+          reason: Lấy registry để phân giải lb://SERVICE-NAME
+
+    - id: route-user
+      name: routes[0] user-service
+      role: client
+      tech: Path=/api/v1/users/** → lb://USER-SERVICE
+      calls:
+        - to: component:banking/user-service
+          protocol: REST
+          reason: Chuyển tiếp request người dùng
+
+    - id: route-bank
+      name: routes[1] bank-service
+      role: client
+      tech: Path=/api/v1/banks/** → lb://BANK-SERVICE
+      calls:
+        - to: component:banking/bank-service
+          protocol: REST
+          reason: Chuyển tiếp request ngân hàng
+
+    - id: route-credit-card
+      name: routes[2] credit-card-service
+      role: client
+      tech: Path=/api/v1/creditCards/** → lb://CREDIT-CARD-SERVICE
+      calls:
+        - to: component:banking/credit-card-service
+          protocol: REST
+          reason: Chuyển tiếp request thẻ tín dụng
+
+    - id: route-account
+      name: routes[3] account-service
+      role: client
+      tech: Path=/api/v1/accounts/** → lb://ACCOUNT-SERVICE
+      calls:
+        - to: component:banking/account-service
+          protocol: REST
+          reason: Chuyển tiếp request tài khoản
+
+    - id: route-invoice
+      name: routes[4] invoice-service
+      role: client
+      tech: Path=/api/v1/invoices/** → lb://INVOICE-SERVICE
+      calls:
+        - to: component:banking/invoice-service
+          protocol: REST
+          reason: Chuyển tiếp request hóa đơn
+
+    - id: route-log
+      name: routes[5] log-service
+      role: client
+      tech: Path=/api/v1/logs/** → lb://LOG-SERVICE
+      calls:
+        - to: component:banking/log-service
+          protocol: REST
+          reason: Chuyển tiếp request tra cứu log

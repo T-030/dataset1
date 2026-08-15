@@ -31,3 +31,51 @@ spec:
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
       reason: Gửi các log hoạt động đến hàng đợi logs.queue
+
+  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+  components:
+    - id: user-controller
+      name: UserController
+      role: controller
+      tech: REST · /api/v1/users
+      calls:
+        - to: user-service-impl
+          reason: Ủy quyền toàn bộ nghiệp vụ
+
+    - id: user-service-impl
+      name: UserServiceImpl
+      role: service
+      tech: Spring @Service · @Cacheable/@CacheEvict
+      calls:
+        - to: user-repository
+          reason: Đọc/ghi bản ghi User
+        - to: user-mapper
+          reason: Chuyển Request/Entity/DTO
+        - to: log-producer
+          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
+        - to: resource:banking/redis-db
+          protocol: Spring Cache
+          reason: Cache users / user
+
+    - id: user-mapper
+      name: UserMapper
+      role: mapper
+      tech: MapStruct
+
+    - id: user-repository
+      name: UserRepository
+      role: repository
+      tech: Spring Data JPA
+      calls:
+        - to: resource:banking/postgres-db
+          protocol: JDBC
+          reason: Bảng user trong banking-microservices
+
+    - id: log-producer
+      name: LogProducer
+      role: producer
+      tech: Spring AMQP · logs.exchange
+      calls:
+        - to: publishesTo:banking/logs.queue
+          protocol: rabbitmq
+          reason: convertAndSend theo routingKey logs.routingKey

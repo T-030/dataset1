@@ -16,6 +16,7 @@ spec:
         role: techlead
   review:
     branch: "main"
+
   topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của hệ thống banking-system
@@ -28,3 +29,50 @@ spec:
     - ref: consumesFrom:banking/logs.queue
       protocol: rabbitmq
       reason: Nhận logs được gửi đến hàng đợi logs.queue từ các service khác
+
+  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+  # Lưu ý: `calls` chỉ diễn tả chiều ĐI RA. Quan hệ logs.queue → LogConsumer là
+  # chiều đi vào nên khai ở `topology` (consumesFrom) và hiện trên C2, không
+  # khai ở đây để tránh vẽ mũi tên ngược.
+  components:
+    - id: log-controller
+      name: LogController
+      role: controller
+      tech: REST · /api/v1/logs
+      calls:
+        - to: log-service-impl
+          reason: Ủy quyền toàn bộ nghiệp vụ
+
+    - id: log-consumer
+      name: LogConsumer
+      role: consumer
+      tech: "@RabbitListener · logs.queue"
+      calls:
+        - to: log-mapper
+          reason: Chuyển LogResponse thành Log
+        - to: log-repository
+          reason: Lưu thẳng bản ghi Log xuống MongoDB
+
+    - id: log-service-impl
+      name: LogServiceImpl
+      role: service
+      tech: Spring @Service
+      calls:
+        - to: log-repository
+          reason: Đọc/ghi bản ghi Log
+        - to: log-mapper
+          reason: Chuyển Request/Entity/DTO
+
+    - id: log-mapper
+      name: LogMapper
+      role: mapper
+      tech: MapStruct
+
+    - id: log-repository
+      name: LogRepository
+      role: repository
+      tech: Spring Data MongoDB
+      calls:
+        - to: resource:banking/mongo
+          protocol: MongoDB Wire
+          reason: Collection log trong banking-microservices
