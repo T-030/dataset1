@@ -1,5 +1,6 @@
 package unaldi.creditcardservice.service.concretes;
 
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.CachePut;
@@ -13,17 +14,21 @@ import unaldi.creditcardservice.utils.rabbitMQ.enums.OperationType;
 import unaldi.creditcardservice.utils.rabbitMQ.producer.LogProducer;
 import unaldi.creditcardservice.utils.rabbitMQ.request.LogRequest;
 import unaldi.creditcardservice.utils.client.BankServiceClient;
+import unaldi.creditcardservice.utils.client.InvoiceServiceClient;
 import unaldi.creditcardservice.utils.client.UserServiceClient;
 import unaldi.creditcardservice.entity.CreditCard;
 import unaldi.creditcardservice.entity.dto.CreditCardDTO;
 import unaldi.creditcardservice.entity.request.CreditCardSaveRequest;
 import unaldi.creditcardservice.entity.request.CreditCardUpdateRequest;
 import unaldi.creditcardservice.repository.CreditCardRepository;
+import unaldi.creditcardservice.repository.OutstandingDebtRepository;
 import unaldi.creditcardservice.service.abstracts.CreditCardService;
 import unaldi.creditcardservice.service.abstracts.mapper.CreditCardMapper;
 import unaldi.creditcardservice.utils.client.dto.BankResponse;
+import unaldi.creditcardservice.utils.client.dto.InvoiceResponse;
 import unaldi.creditcardservice.utils.client.dto.RestResponse;
 import unaldi.creditcardservice.utils.client.dto.UserResponse;
+import unaldi.creditcardservice.utils.client.enums.PaymentStatus;
 import unaldi.creditcardservice.utils.constant.ExceptionMessages;
 import unaldi.creditcardservice.utils.constant.Messages;
 import unaldi.creditcardservice.utils.exception.customExceptions.CreditCardNotFoundException;
@@ -40,18 +45,25 @@ import java.util.Objects;
  * @author Emre Ünaldı
  */
 @Service
+@Slf4j
 public class CreditCardServiceImpl implements CreditCardService {
+    private static final int INVOICE_FETCH_ATTEMPTS = 3;
+
     private final CreditCardRepository creditCardRepository;
+    private final OutstandingDebtRepository outstandingDebtRepository;
     private final UserServiceClient userServiceClient;
     private final BankServiceClient bankServiceClient;
+    private final InvoiceServiceClient invoiceServiceClient;
     private final LogProducer logProducer;
 
     @Autowired
-    public CreditCardServiceImpl(CreditCardRepository creditCardRepository, UserServiceClient userServiceClient, BankServiceClient bankServiceClient, LogProducer logProducer)
+    public CreditCardServiceImpl(CreditCardRepository creditCardRepository, OutstandingDebtRepository outstandingDebtRepository, UserServiceClient userServiceClient, BankServiceClient bankServiceClient, InvoiceServiceClient invoiceServiceClient, LogProducer logProducer)
     {
         this.creditCardRepository = creditCardRepository;
+        this.outstandingDebtRepository = outstandingDebtRepository;
         this.userServiceClient = userServiceClient;
         this.bankServiceClient = bankServiceClient;
+        this.invoiceServiceClient = invoiceServiceClient;
         this.logProducer = logProducer;
     }
 
@@ -62,6 +74,8 @@ public class CreditCardServiceImpl implements CreditCardService {
         bankServiceClient.findById(creditCardSaveRequest.bankId());
 
         CreditCard creditCard = CreditCardMapper.INSTANCE.convertToSaveCreditCard(creditCardSaveRequest);
+        creditCard.setDebtAmount(fetchOutstandingAmount(creditCardSaveRequest.userId()));
+
         this.creditCardRepository.save(creditCard);
 
         logProducer.sendToLog(prepareLogRequest(OperationType.POST,Messages.CREDIT_CARD_CREATED));
@@ -84,6 +98,10 @@ public class CreditCardServiceImpl implements CreditCardService {
 
         CreditCard creditCard = CreditCardMapper.INSTANCE.convertToUpdateCreditCard(creditCardUpdateRequest);
         this.creditCardRepository.save(creditCard);
+
+        if (creditCard.getDebtAmount() != null && creditCard.getDebtAmount() <= 0.0) {
+            this.outstandingDebtRepository.settleUnpaidByUserId(creditCard.getUserId());
+        }
 
         logProducer.sendToLog(prepareLogRequest(OperationType.PUT,Messages.CREDIT_CARD_UPDATED));
 
@@ -115,10 +133,13 @@ public class CreditCardServiceImpl implements CreditCardService {
     @Cacheable(value = Caches.CREDIT_CARD_CACHE, key = "#creditCardId", unless = "#result.success != true")
     @Override
     public DataResult<CreditCardDTO> findById(Long creditCardId) {
-        CreditCardDTO creditCardDTO = this.creditCardRepository
+        CreditCard creditCard = this.creditCardRepository
                 .findById(creditCardId)
-                .map(CreditCardMapper.INSTANCE::convertToCreditCardDTO)
                 .orElseThrow(() -> new CreditCardNotFoundException(ExceptionMessages.CREDIT_CARD_NOT_FOUND));
+
+        creditCard.setDebtAmount(this.outstandingDebtRepository.sumUnpaidByUserId(creditCard.getUserId()));
+
+        CreditCardDTO creditCardDTO = CreditCardMapper.INSTANCE.convertToCreditCardDTO(creditCard);
 
         logProducer.sendToLog(prepareLogRequest(OperationType.GET,Messages.CREDIT_CARD_BANK_FOUND));
 
@@ -129,6 +150,10 @@ public class CreditCardServiceImpl implements CreditCardService {
     @Override
     public DataResult<List<CreditCardDTO>> findAll() {
         List<CreditCard> creditCardList = this.creditCardRepository.findAll();
+
+        creditCardList.forEach(creditCard ->
+                creditCard.setDebtAmount(this.outstandingDebtRepository.sumUnpaidByUserId(creditCard.getUserId()))
+        );
 
         logProducer.sendToLog(prepareLogRequest(OperationType.GET,Messages.CREDIT_CARDS_LISTED));
 
@@ -166,6 +191,34 @@ public class CreditCardServiceImpl implements CreditCardService {
                 bankResponse,
                 Messages.CREDIT_CARD_BANK_FOUND
         );
+    }
+
+    private Double fetchOutstandingAmount(Long userId) {
+        for (int attempt = 1; attempt <= INVOICE_FETCH_ATTEMPTS; attempt++) {
+            try {
+                return sumUnpaidInvoices(invoiceServiceClient.findAll(), userId);
+            } catch (RuntimeException exception) {
+                log.warn("Invoice lookup failed, attempt {} of {}", attempt, INVOICE_FETCH_ATTEMPTS);
+            }
+        }
+
+        return 0.0;
+    }
+
+    private Double sumUnpaidInvoices(ResponseEntity<RestResponse<List<InvoiceResponse>>> response, Long userId) {
+        if (response == null || response.getBody() == null || response.getBody().getData() == null) {
+            return 0.0;
+        }
+
+        return response.getBody()
+                .getData()
+                .stream()
+                .filter(invoice -> Objects.equals(invoice.userId(), userId))
+                .filter(invoice -> invoice.paymentStatus() != PaymentStatus.PAID)
+                .filter(invoice -> invoice.paymentStatus() != PaymentStatus.CANCELLED)
+                .filter(invoice -> invoice.amount() != null)
+                .mapToDouble(InvoiceResponse::amount)
+                .sum();
     }
 
     private LogRequest prepareLogRequest(

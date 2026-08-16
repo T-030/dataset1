@@ -127,6 +127,7 @@ services:
       - REDIS_PORT=6379
       - USER_SERVICE_HOST=user-service
       - BANK_SERVICE_HOST=bank-service
+      - INVOICE_SERVICE_HOST=invoice-service
     networks:
       - banking-microservices-network
     depends_on:
@@ -202,6 +203,7 @@ services:
       - REDIS_HOST=redis-db
       - REDIS_PORT=6379
       - USER_SERVICE_HOST=user-service
+      - CREDIT_CARD_SERVICE_HOST=credit-card-service
     networks:
       - banking-microservices-network
     depends_on:

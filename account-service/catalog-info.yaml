@@ -1,109 +1,221 @@
+# account-service/catalog-info.yaml
+# Account Service — quản lý tài khoản thanh toán
+# Chức năng: CRUD tài khoản, kiểm tra userId/bankId tồn tại qua Feign trước khi lưu,
+# cache Redis, phát log nghiệp vụ lên RabbitMQ
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: banking
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "2"
+    boundary: core
+    pii: "false"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8084"
 
 spec:
-  type: service
-  id: account-service
-  name: Account Service
-  description: Service handling account transactions, types, and status
+  # type — service = binary HTTP API, có API surface
+  type: service  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.account-service"
+  id: account-service  # require -> table: service.service_key
+
+  name: Account Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Quản lý tài khoản: số tài khoản, số dư, loại tài khoản (CURRENT/DEPOSIT/CREDIT) và
+    trạng thái (ACTIVE/INACTIVE). Trước khi lưu, gọi đồng bộ User Service và Bank Service
+    để chắc chắn userId và bankId tồn tại; ngoài ra còn lộ hai endpoint đọc xuyên service
+    /users/{userId} và /banks/{bankId} trả về dữ liệu lấy từ hai service đó.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
-  review:
-    branch: "main"
 
-  topology:
+  review:
+    branch: "main"  # require để validate merge request
+
+  runtime:
+    language: Java 21
+    framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
+    buildTool: maven
+    libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-openfeign, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
+    ports:
+      - { number: 8084, name: http, protocol: http, exposure: cluster }
+  dataClassification: internal
+  # Feign client trỏ URL tĩnh (@FeignClient(url = "http://${USER_SERVICE_HOST:localhost}:8081"))
+  # nên KHÔNG đi qua Eureka và KHÔNG có cân bằng tải. Không cấu hình timeout, retry hay
+  # circuit breaker: User/Bank Service chậm thì request tại đây treo theo.
+  syncDependencyPolicy:
+    resolution: static-url
+    timeout: none
+    retry: none
+    circuitBreaker: none
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
+      reason: Component này là một phần của system banking-system
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/accounts-api
+      protocol: http
+      reason: API /api/v1/accounts cho gateway định tuyến vào
+
+    - ref: consumesApis:banking/users-api
+      protocol: http
+      reason: Kiểm tra userId tồn tại trước khi lưu và phục vụ GET /accounts/users/{userId}
+
+    - ref: consumesApis:banking/banks-api
+      protocol: http
+      reason: Kiểm tra bankId tồn tại trước khi lưu và phục vụ GET /accounts/banks/{bankId}
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
-      reason: Đăng ký dịch vụ với Eureka Server
+      protocol: http
+      reason: Đăng ký instance với Eureka Server
+
     - ref: resource:banking/postgres-db
-      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin tài khoản
+      protocol: postgresql
+      reason: Bảng accounts trong database dùng chung banking-microservices
+
     - ref: resource:banking/redis-db
-      reason: Redis cache cho thông tin tài khoản
+      protocol: redis
+      reason: Cache account / accounts / account_user / account_bank với prefix account-service
+
     - ref: resource:banking/rabbitmq-log
-      reason: RabbitMQ broker dùng để gửi log
+      protocol: rabbitmq
+      reason: Broker nhận log nghiệp vụ
+
+    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
-      reason: Gửi các log hoạt động đến hàng đợi logs.queue
-    - ref: consumesApis:banking/user-service
-      protocol: REST
-      reason: FeignClient gọi user-service để lấy thông tin user
-    - ref: consumesApis:banking/bank-service
-      protocol: REST
-      reason: FeignClient gọi bank-service để lấy thông tin ngân hàng
+      reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
 
-  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
+# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
+# và blast_radius của những service khác bị tính sai theo.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong Account Service
+
   components:
     - id: account-controller
       name: AccountController
-      role: controller
-      tech: REST · /api/v1/accounts
-      calls:
-        - to: account-service-impl
-          reason: Ủy quyền toàn bộ nghiệp vụ
-
+      technology: Spring MVC · /api/v1/accounts
+      description: Bảy endpoint — năm CRUD cộng /users/{userId} và /banks/{bankId}
+      exposedPort: 8084
     - id: account-service-impl
       name: AccountServiceImpl
-      role: service
-      tech: Spring @Service · @Cacheable/@CacheEvict
-      calls:
-        - to: account-repository
-          reason: Đọc/ghi bản ghi Account
-        - to: account-mapper
-          reason: Chuyển Request/Entity/DTO
-        - to: user-service-client
-          reason: Kiểm tra userId tồn tại trước khi lưu
-        - to: bank-service-client
-          reason: Kiểm tra bankId tồn tại trước khi lưu
-        - to: log-producer
-          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
-        - to: resource:banking/redis-db
-          protocol: Spring Cache
-          reason: Cache accounts / account / account-user / account-bank
-
+      technology: Spring @Service · @Cacheable / @CachePut / @CacheEvict
+      description: Toàn bộ nghiệp vụ, điều phối hai Feign client trước khi ghi
     - id: account-mapper
       name: AccountMapper
-      role: mapper
-      tech: MapStruct
-
+      technology: MapStruct 1.5.5
+      description: Chuyển Request ↔ Entity ↔ DTO
     - id: account-repository
       name: AccountRepository
-      role: repository
-      tech: Spring Data JPA
-      calls:
-        - to: resource:banking/postgres-db
-          protocol: JDBC
-          reason: Bảng account trong banking-microservices
-
+      technology: Spring Data JPA · JpaRepository<Account, Long>
+      description: Chỉ dùng phương thức có sẵn, không khai query tuỳ biến
     - id: user-service-client
       name: UserServiceClient
-      role: client
-      tech: OpenFeign · user-service:8081
-      calls:
-        - to: consumesApis:banking/user-service
-          protocol: REST
-          reason: GET /api/v1/users/{userId}
-
+      technology: OpenFeign · url tĩnh http://${USER_SERVICE_HOST}:8081
+      description: GET /api/v1/users/{userId} — không timeout, không circuit breaker
     - id: bank-service-client
       name: BankServiceClient
-      role: client
-      tech: OpenFeign · bank-service:8082
-      calls:
-        - to: consumesApis:banking/bank-service
-          protocol: REST
-          reason: GET /api/v1/banks/{bankId}
-
+      technology: OpenFeign · url tĩnh http://${BANK_SERVICE_HOST}:8082
+      description: GET /api/v1/banks/{bankId} — không timeout, không circuit breaker
+    - id: redis-cache
+      name: RedisConfiguration
+      technology: RedisCacheManager · TTL 1 giờ · prefix account-service
+      description: Cache account / accounts / account_user / account_bank
     - id: log-producer
       name: LogProducer
-      role: producer
-      tech: Spring AMQP · logs.exchange
-      calls:
-        - to: publishesTo:banking/logs.queue
-          protocol: rabbitmq
-          reason: convertAndSend theo routingKey logs.routingKey
+      technology: Spring AMQP · logs.exchange
+      description: convertAndSend theo routingKey logs.routingKey
+
+  internalRelations:
+    - { from: account-controller,   to: account-service-impl, description: Uỷ quyền toàn bộ nghiệp vụ }
+    - { from: account-service-impl, to: user-service-client,  description: Bước 1 — kiểm tra userId tồn tại }
+    - { from: account-service-impl, to: bank-service-client,  description: Bước 2 — kiểm tra bankId tồn tại }
+    - { from: account-service-impl, to: account-repository,   description: Bước 3 — đọc/ghi bản ghi Account }
+    - { from: account-service-impl, to: account-mapper,       description: Chuyển Request/Entity/DTO }
+    - { from: account-service-impl, to: redis-cache,          description: Đọc/xoá cache trước và sau mỗi thao tác }
+    - { from: account-service-impl, to: log-producer,         description: Ghi log mỗi thao tác POST/PUT/DELETE/GET }
+
+  externalRelations:
+    - { from: user-service-client, to: banking/user-service,  technology: HTTP,     description: "GET /api/v1/users/{userId}" }
+    - { from: bank-service-client, to: banking/bank-service,  technology: HTTP,     description: "GET /api/v1/banks/{bankId}" }
+    - { from: account-repository,  to: banking/postgres-db,   technology: JDBC,     description: Bảng accounts }
+    - { from: redis-cache,         to: banking/redis-db,      technology: RESP,     description: Bốn vùng cache của service }
+    - { from: log-producer,        to: banking/logs.queue,    technology: rabbitmq, description: Phát log qua logs.exchange }
+
+c4:
+  diagramType: classDiagram
+  title: C4 — Mô hình dữ liệu Account Service
+
+  relationalDatabase:
+    engine: PostgreSQL (image postgres:latest)
+    database: banking-microservices
+    schema: public
+    migrationTool: none
+    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    encryptionAtRest: false
+    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
+    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+
+  entities:
+    - name: accounts
+      stereotype: aggregate-root
+      description: Tài khoản của một người dùng mở tại một chi nhánh ngân hàng
+      columns:
+        - { name: id,             type: BIGSERIAL,          key: PK, nullable: false }
+        - { name: account_number, type: VARCHAR(20),        nullable: false }
+        - { name: user_id,        type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới users.id, không có ràng buộc FK }
+        - { name: balance,        type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số dư tiền tệ, nên là NUMERIC }
+        - { name: account_type,   type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: CURRENT, DEPOSIT, CREDIT" }
+        - { name: account_status, type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: ACTIVE, INACTIVE" }
+        - { name: bank_id,        type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới banks.id, không có ràng buộc FK }
+      # Không có UNIQUE trên account_number, không CHECK cho enum, không index ngoài khoá chính.
+      constraints: []
+      indexes: []
+
+  # Quan hệ tới users và banks là quan hệ giữa các service, không phải quan hệ trong
+  # cùng một lược đồ — nên khai ở externalRelations dưới đây thay vì ở relations.
+  relations: []
+
+  externalRelations:
+    - { from: accounts.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+    - { from: accounts.bank_id, to: banking/bank-service, entity: banks, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+
+  externalReaders: []

@@ -15,6 +15,7 @@ import unaldi.invoiceservice.repository.InvoiceRepository;
 import unaldi.invoiceservice.service.concretes.InvoiceServiceImpl;
 import unaldi.invoiceservice.utils.FailTestMessages;
 import unaldi.invoiceservice.utils.ObjectFactory;
+import unaldi.invoiceservice.utils.client.CreditCardServiceClient;
 import unaldi.invoiceservice.utils.client.UserServiceClient;
 import unaldi.invoiceservice.utils.client.dto.RestResponse;
 import unaldi.invoiceservice.utils.client.dto.UserResponse;
@@ -52,6 +53,8 @@ class InvoiceServiceTest {
     private LogProducer logProducer;
     @Mock
     private UserServiceClient userServiceClient;
+    @Mock
+    private CreditCardServiceClient creditCardServiceClient;
     @InjectMocks
     private InvoiceServiceImpl invoiceService;
 

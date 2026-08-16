@@ -1,95 +1,232 @@
+# invoice-service/catalog-info.yaml
+# Invoice Service — quản lý hoá đơn và trạng thái thanh toán
+# Chức năng: CRUD hoá đơn, kiểm tra userId tồn tại qua Feign trước khi lưu, cache Redis,
+# phát log nghiệp vụ lên RabbitMQ
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: banking
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "2"
+    boundary: core
+    pii: "false"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8085"
 
 spec:
-  type: service
-  id: invoice-service
-  name: Invoice Service
-  description: Service handling invoices and payment statuses
+  # type — service = binary HTTP API, có API surface
+  type: service  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.invoice-service"
+  id: invoice-service  # require -> table: service.service_key
+
+  name: Invoice Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Quản lý hoá đơn: số hoá đơn, số tiền, ngày lập, hạn thanh toán và trạng thái
+    (PAID/PENDING/OVERDUE/FAILED/CANCELLED). Trước khi lưu, gọi đồng bộ User Service để
+    chắc chắn userId tồn tại; ngoài ra lộ endpoint đọc xuyên service /users/{userId}.
+    Khác Account và Credit Card, service này không tham chiếu tới ngân hàng.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
-  review:
-    branch: "main"
 
-  topology:
+  review:
+    branch: "main"  # require để validate merge request
+
+  runtime:
+    language: Java 21
+    framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
+    buildTool: maven
+    libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-openfeign, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
+    ports:
+      - { number: 8085, name: http, protocol: http, exposure: cluster }
+  dataClassification: internal
+  syncDependencyPolicy:
+    resolution: static-url  # @FeignClient(url = ...) — không qua Eureka, không cân bằng tải
+    timeout: none
+    retry: none
+    circuitBreaker: none
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
+      reason: Component này là một phần của system banking-system
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/invoices-api
+      protocol: http
+      reason: API /api/v1/invoices cho gateway định tuyến vào
+
+    - ref: consumesApis:banking/users-api
+      protocol: http
+      reason: Kiểm tra userId tồn tại trước khi lưu và phục vụ GET /invoices/users/{userId}
+
+    - ref: consumesApis:banking/credit-cards-api
+      protocol: http
+      reason: Xác nhận khách hàng đã có thẻ và cộng số tiền hoá đơn vào dư nợ thẻ
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
-      reason: Đăng ký dịch vụ với Eureka Server
+      protocol: http
+      reason: Đăng ký instance với Eureka Server
+
     - ref: resource:banking/postgres-db
-      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin hóa đơn
+      protocol: postgresql
+      reason: Bảng invoices trong database dùng chung banking-microservices
+
     - ref: resource:banking/redis-db
-      reason: Redis cache cho thông tin hóa đơn
+      protocol: redis
+      reason: Cache invoice / invoices / invoice_user với prefix invoice-service
+
     - ref: resource:banking/rabbitmq-log
-      reason: RabbitMQ broker dùng để gửi log
+      protocol: rabbitmq
+      reason: Broker nhận log nghiệp vụ
+
+    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
-      reason: Gửi các log hoạt động đến hàng đợi logs.queue
-    - ref: consumesApis:banking/user-service
-      protocol: REST
-      reason: FeignClient gọi user-service để lấy thông tin user
+      reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
 
-  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+    - ref: consumesFrom:banking/logs.queue
+      protocol: rabbitmq
+      reason: Đối soát số thao tác hoá đơn theo luồng log đã phát
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
+# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
+# và blast_radius của những service khác bị tính sai theo.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong Invoice Service
+
   components:
     - id: invoice-controller
       name: InvoiceController
-      role: controller
-      tech: REST · /api/v1/invoices
-      calls:
-        - to: invoice-service-impl
-          reason: Ủy quyền toàn bộ nghiệp vụ
-
+      technology: Spring MVC · /api/v1/invoices
+      description: Sáu endpoint — năm CRUD cộng /users/{userId}
+      exposedPort: 8085
     - id: invoice-service-impl
       name: InvoiceServiceImpl
-      role: service
-      tech: Spring @Service · @Cacheable/@CacheEvict
-      calls:
-        - to: invoice-repository
-          reason: Đọc/ghi bản ghi Invoice
-        - to: invoice-mapper
-          reason: Chuyển Request/Entity/DTO
-        - to: user-service-client
-          reason: Kiểm tra userId tồn tại trước khi lưu
-        - to: log-producer
-          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
-        - to: resource:banking/redis-db
-          protocol: Spring Cache
-          reason: Cache invoices / invoice / invoice-user
-
+      technology: Spring @Service · @Transactional · @Cacheable / @CachePut / @CacheEvict
+      description: >-
+        Toàn bộ nghiệp vụ. save() chạy trong một transaction bao cả hai bước kiểm tra
+        từ xa, bước ghi Invoice, bước cập nhật dư nợ thẻ và bước phát log.
+        findAll() kiểm tra trạng thái người dùng cho từng hoá đơn trước khi trả về
     - id: invoice-mapper
       name: InvoiceMapper
-      role: mapper
-      tech: MapStruct
-
+      technology: MapStruct 1.5.5
+      description: Chuyển Request ↔ Entity ↔ DTO
     - id: invoice-repository
       name: InvoiceRepository
-      role: repository
-      tech: Spring Data JPA
-      calls:
-        - to: resource:banking/postgres-db
-          protocol: JDBC
-          reason: Bảng invoice trong banking-microservices
-
+      technology: Spring Data JPA · JpaRepository<Invoice, Long>
+      description: Chỉ dùng phương thức có sẵn, không khai query tuỳ biến
     - id: user-service-client
       name: UserServiceClient
-      role: client
-      tech: OpenFeign · user-service:8081
-      calls:
-        - to: consumesApis:banking/user-service
-          protocol: REST
-          reason: GET /api/v1/users/{userId}
-
+      technology: OpenFeign · url tĩnh http://${USER_SERVICE_HOST}:8081
+      description: GET /api/v1/users/{userId} — không timeout, không circuit breaker
+    - id: credit-card-service-client
+      name: CreditCardServiceClient
+      technology: OpenFeign · url tĩnh http://${CREDIT_CARD_SERVICE_HOST}:8083
+      description: >-
+        GET /api/v1/creditCards/users/{userId} xác nhận khách hàng; GET /api/v1/creditCards
+        lấy toàn bộ thẻ để tìm thẻ của khách; PUT /api/v1/creditCards ghi lại thẻ với dư nợ mới
+    - id: invoice-audit-consumer
+      name: InvoiceAuditConsumer
+      technology: "@RabbitListener · logs.queue"
+      description: Đếm số thao tác hoá đơn đọc được từ luồng log, giữ trong AtomicLong
+    - id: redis-cache
+      name: RedisConfiguration
+      technology: RedisCacheManager · TTL 1 giờ · prefix invoice-service
+      description: Cache invoice / invoices / invoice_user
     - id: log-producer
       name: LogProducer
-      role: producer
-      tech: Spring AMQP · logs.exchange
-      calls:
-        - to: publishesTo:banking/logs.queue
-          protocol: rabbitmq
-          reason: convertAndSend theo routingKey logs.routingKey
+      technology: Spring AMQP · logs.exchange
+      description: convertAndSend theo routingKey logs.routingKey
+
+  internalRelations:
+    - { from: invoice-controller,   to: invoice-service-impl, description: Uỷ quyền toàn bộ nghiệp vụ }
+    - { from: invoice-service-impl, to: user-service-client,  description: Bước 1 — kiểm tra userId tồn tại; trong findAll gọi lại cho từng hoá đơn }
+    - { from: invoice-service-impl, to: credit-card-service-client, description: Bước 2 — xác nhận khách hàng đã có thẻ }
+    - { from: invoice-service-impl, to: invoice-repository,   description: Bước 3 — đọc/ghi bản ghi Invoice }
+    - { from: invoice-service-impl, to: credit-card-service-client, description: Bước 4 — cộng số tiền hoá đơn vào dư nợ thẻ }
+    - { from: invoice-service-impl, to: invoice-mapper,       description: Chuyển Request/Entity/DTO }
+    - { from: invoice-service-impl, to: redis-cache,          description: Đọc/xoá cache trước và sau mỗi thao tác }
+    - { from: invoice-service-impl, to: log-producer,         description: Ghi log mỗi thao tác POST/PUT/DELETE/GET }
+
+  externalRelations:
+    - { from: user-service-client,        to: banking/user-service,        technology: HTTP,     description: "GET /api/v1/users/{userId}" }
+    - { from: credit-card-service-client, to: banking/credit-card-service, technology: HTTP,     description: "GET /api/v1/creditCards/users/{userId} và GET /api/v1/creditCards" }
+    - { from: credit-card-service-client, to: banking/credit-card-service, technology: HTTP,     description: PUT /api/v1/creditCards ghi lại thẻ với dư nợ mới }
+    - { from: invoice-repository,         to: banking/postgres-db,         technology: JDBC,     description: Bảng invoices }
+    - { from: redis-cache,                to: banking/redis-db,            technology: RESP,     description: Ba vùng cache của service }
+    - { from: log-producer,               to: banking/logs.queue,          technology: rabbitmq, description: Phát log qua logs.exchange }
+    - { from: invoice-audit-consumer,     to: banking/logs.queue,          technology: rabbitmq, description: Đọc bản ghi log từ logs.queue }
+
+c4:
+  diagramType: classDiagram
+  title: C4 — Mô hình dữ liệu Invoice Service
+
+  relationalDatabase:
+    engine: PostgreSQL (image postgres:latest)
+    database: banking-microservices
+    schema: public
+    migrationTool: none
+    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    encryptionAtRest: false
+    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
+    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+
+  entities:
+    - name: invoices
+      stereotype: aggregate-root
+      description: Hoá đơn phát hành cho một người dùng
+      columns:
+        - { name: id,             type: BIGSERIAL,          key: PK, nullable: false }
+        - { name: invoice_number, type: VARCHAR(20),        nullable: false }
+        - { name: user_id,        type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới users.id, không có ràng buộc FK }
+        - { name: amount,         type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
+        - { name: invoice_date,   type: DATE,               nullable: false }
+        - { name: due_date,       type: DATE,               nullable: false }
+        - { name: payment_status, type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: PAID, PENDING, OVERDUE, FAILED, CANCELLED" }
+      # Không có UNIQUE trên invoice_number, không CHECK cho enum, không index ngoài khoá chính.
+      constraints: []
+      indexes: []
+
+  relations: []
+
+  externalRelations:
+    - { from: invoices.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+
+  externalReaders:
+    - { consumer: banking/credit-card-service, tables: [invoices], access: read-write, mode: "aggregate_query + status_update", via: JDBC }

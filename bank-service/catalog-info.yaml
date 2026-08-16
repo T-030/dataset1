@@ -1,81 +1,194 @@
+# bank-service/catalog-info.yaml
+# Bank Service — quản lý ngân hàng và chi nhánh
+# Chức năng: CRUD ngân hàng/chi nhánh, cache Redis, phát log nghiệp vụ lên RabbitMQ và là
+# nguồn dữ liệu bank cho account-service, credit-card-service gọi vào
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: banking
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "1"
+    boundary: core
+    pii: "false"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8082"
 
 spec:
-  type: service
-  id: bank-service
-  name: Bank Service
-  description: Service handling banking branches and details
+  # type — service = binary HTTP API, có API surface
+  type: service  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.bank-service"
+  id: bank-service  # require -> table: service.service_key
+
+  name: Bank Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Quản lý dữ liệu chủ về ngân hàng và chi nhánh: tên, mã ngân hàng, mã chi nhánh, số
+    tài khoản đầu mối và thông tin liên hệ. Không gọi service nào khác — đây là service
+    nghiệp vụ duy nhất không có Feign client. Account và Credit Card gọi vào để kiểm tra
+    bankId tồn tại trước khi lưu.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
-  review:
-    branch: "main"
 
-  topology:
+  review:
+    branch: "main"  # require để validate merge request
+
+  runtime:
+    language: Java 21
+    framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
+    buildTool: maven
+    libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
+    ports:
+      - { number: 8082, name: http, protocol: http, exposure: cluster }
+  dataClassification: internal
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
+      reason: Component này là một phần của system banking-system
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/banks-api
+      protocol: http
+      reason: API /api/v1/banks cho gateway, account-service và credit-card-service
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
-      reason: Đăng ký dịch vụ với Eureka Server
+      protocol: http
+      reason: Đăng ký instance với Eureka Server
+
     - ref: resource:banking/postgres-db
-      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin ngân hàng và chi nhánh
+      protocol: postgresql
+      reason: Bảng banks trong database dùng chung banking-microservices
+
     - ref: resource:banking/redis-db
-      reason: Redis cache cho thông tin ngân hàng
+      protocol: redis
+      reason: Cache bank / banks với prefix bank-service
+
     - ref: resource:banking/rabbitmq-log
-      reason: RabbitMQ broker dùng để gửi log
+      protocol: rabbitmq
+      reason: Broker nhận log nghiệp vụ
+
+    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
-      reason: Gửi các log hoạt động đến hàng đợi logs.queue
+      reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
 
-  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
+# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
+# và blast_radius của những service khác bị tính sai theo.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong Bank Service
+
   components:
     - id: bank-controller
       name: BankController
-      role: controller
-      tech: REST · /api/v1/banks
-      calls:
-        - to: bank-service-impl
-          reason: Ủy quyền toàn bộ nghiệp vụ
-
+      technology: Spring MVC · /api/v1/banks
+      description: Năm endpoint POST / PUT / DELETE / GET by id / GET all
+      exposedPort: 8082
     - id: bank-service-impl
       name: BankServiceImpl
-      role: service
-      tech: Spring @Service · @Cacheable/@CacheEvict
-      calls:
-        - to: bank-repository
-          reason: Đọc/ghi bản ghi Bank
-        - to: bank-mapper
-          reason: Chuyển Request/Entity/DTO
-        - to: log-producer
-          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
-        - to: resource:banking/redis-db
-          protocol: Spring Cache
-          reason: Cache banks / bank
-
+      technology: Spring @Service · @Cacheable / @CachePut / @CacheEvict
+      description: Toàn bộ nghiệp vụ, tự gọi mapper, repository và log producer
     - id: bank-mapper
       name: BankMapper
-      role: mapper
-      tech: MapStruct
-
+      technology: MapStruct 1.5.5
+      description: Chuyển Request ↔ Entity ↔ DTO
     - id: bank-repository
       name: BankRepository
-      role: repository
-      tech: Spring Data JPA
-      calls:
-        - to: resource:banking/postgres-db
-          protocol: JDBC
-          reason: Bảng bank trong banking-microservices
-
+      technology: Spring Data JPA · JpaRepository<Bank, Long>
+      description: Chỉ dùng phương thức có sẵn, không khai query tuỳ biến
+    - id: redis-cache
+      name: RedisConfiguration
+      technology: RedisCacheManager · TTL 1 giờ · prefix bank-service
+      description: Cấu hình cache bank / banks, serialize JSON có type info
     - id: log-producer
       name: LogProducer
-      role: producer
-      tech: Spring AMQP · logs.exchange
-      calls:
-        - to: publishesTo:banking/logs.queue
-          protocol: rabbitmq
-          reason: convertAndSend theo routingKey logs.routingKey
+      technology: Spring AMQP · logs.exchange
+      description: convertAndSend theo routingKey logs.routingKey
+
+  internalRelations:
+    - { from: bank-controller,   to: bank-service-impl, description: Uỷ quyền toàn bộ nghiệp vụ }
+    - { from: bank-service-impl, to: bank-repository,   description: Đọc/ghi bản ghi Bank }
+    - { from: bank-service-impl, to: bank-mapper,       description: Chuyển Request/Entity/DTO }
+    - { from: bank-service-impl, to: redis-cache,       description: Đọc/xoá cache trước và sau mỗi thao tác }
+    - { from: bank-service-impl, to: log-producer,      description: Ghi log mỗi thao tác POST/PUT/DELETE/GET }
+
+  externalRelations:
+    - { from: bank-repository, to: banking/postgres-db, technology: JDBC,     description: Bảng banks }
+    - { from: redis-cache,     to: banking/redis-db,    technology: RESP,     description: Cache bank / banks }
+    - { from: log-producer,    to: banking/logs.queue,  technology: rabbitmq, description: Phát log qua logs.exchange }
+
+c4:
+  diagramType: classDiagram
+  title: C4 — Mô hình dữ liệu Bank Service
+
+  relationalDatabase:
+    engine: PostgreSQL (image postgres:latest)
+    database: banking-microservices
+    schema: public
+    migrationTool: none
+    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    encryptionAtRest: false
+    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
+    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+
+  entities:
+    - name: banks
+      stereotype: aggregate-root
+      description: Ngân hàng và chi nhánh, khoá ngoại logic của accounts và credit_cards
+      columns:
+        - { name: id,             type: BIGSERIAL,    key: PK, nullable: false }
+        - { name: bank_name,      type: VARCHAR(100), nullable: false }
+        - { name: bank_code,      type: VARCHAR(20),  nullable: false }
+        - { name: branch_name,    type: VARCHAR(100), nullable: false }
+        - { name: branch_code,    type: VARCHAR(20),  nullable: false }
+        - { name: account_number, type: VARCHAR(20),  nullable: false, description: Số tài khoản đầu mối của chi nhánh }
+        - { name: address,        type: VARCHAR(250), nullable: false }
+        - { name: email,          type: VARCHAR(250), nullable: false }
+        - { name: phone_number,   type: VARCHAR(250), nullable: false }
+      # Không có UNIQUE trên bank_code/branch_code và không có index ngoài khoá chính.
+      constraints: []
+      indexes: []
+
+  # Không có quan hệ nội bộ: service chỉ sở hữu một bảng duy nhất.
+  relations: []
+
+  externalReaders:
+    # Hai service dưới đây KHÔNG đọc bảng banks trực tiếp — chúng gọi REST và giữ bankId
+    # như một khoá ngoài logic, không có ràng buộc FK ở tầng cơ sở dữ liệu.
+    - { consumer: banking/account-service,     access: api-only, via: "GET /api/v1/banks/{bankId}" }
+    - { consumer: banking/credit-card-service, access: api-only, via: "GET /api/v1/banks/{bankId}" }

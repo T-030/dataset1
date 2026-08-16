@@ -1,32 +1,131 @@
+# discovery-client-service/catalog-info.yaml
+# Discovery Client Service — Eureka Server của hệ thống
+# Chức năng: giữ service registry, nhận đăng ký instance từ 7 service còn lại và trả
+# registry cho api-gateway-service phân giải các URI dạng lb://SERVICE-NAME
+#
+# LƯU Ý: bản khai cũ của file này mô tả một service khác hoàn toàn ("Client Application
+# Service" nhận đơn vay, gọi OCR / Config Server / Database Server v2). Những component
+# đó không tồn tại trong repo, và spec.id sai (`client-application-service`) khiến mọi
+# ref `component:banking/discovery-client-service` ở 7 service khác bị treo (dangling).
+# Nội dung dưới đây được viết lại theo mã nguồn thật.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: banking
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: platform  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "0"
+    boundary: platform
+    stateful: "false"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8761"
+    dashboard: http://localhost:8761
 
 spec:
-  type: service
-  id: client-application-service
-  name: Client Application Service
-  description: Dịch vụ tiếp nhận đơn vay của khách hàng, tải lên chứng từ và giao tiếp với OCR, Database, Commercial Service
+  # type — service = binary HTTP/gRPC API, có API surface
+  type: service  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.discovery-client-service"
+  id: discovery-client-service  # require -> table: service.service_key
+
+  name: Discovery Client Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Eureka Server (@EnableEurekaServer) giữ service registry của toàn hệ thống. Bản thân
+    nó không đăng ký với ai (register-with-eureka=false, fetch-registry=false) và không
+    sở hữu kho dữ liệu nào — registry nằm hoàn toàn trong bộ nhớ. Mọi service khác đều
+    phụ thuộc vào nó, docker-compose chặn chúng khởi động tới khi healthcheck :8761 xanh.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
-  review:
-    branch: "main"
 
-  topology:
+  review:
+    branch: "main"  # require để validate merge request
+
+  runtime:
+    language: Java 21
+    framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
+    buildTool: maven
+    libraries: [spring-cloud-starter-netflix-eureka-server, spring-boot-starter-actuator]
+    ports:
+      - { number: 8761, name: http, protocol: http, exposure: cluster }
+  dataClassification: internal
+  # Không có kho dữ liệu, không có secret. Actuator mở toàn bộ endpoint
+  # (management.endpoints.web.exposure.include=*) để docker-compose healthcheck /actuator/health.
+  statePersistence: none
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
-    - ref: component:banking/discovery-service
-      reason: Đăng ký dịch vụ với Eureka Server
-    - ref: component:banking/config-server
-      reason: Lấy cấu hình tập trung từ Config Server
-    - ref: component:banking/database-server-v2
-      reason: Gửi và lưu trữ dữ liệu hồ sơ đăng ký vay
-    - ref: component:banking/ocr-service
-      reason: Trích xuất dữ liệu từ các tài liệu do khách hàng tải lên
-    - ref: component:banking/commercial-service
-      reason: Chuyển thông tin đăng ký vay để đánh giá điều kiện ban đầu
+      reason: Component này là một phần của system banking-system
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/eureka-api
+      protocol: http
+      reason: /eureka — nhận đăng ký instance và trả registry cho client
+
+  # Service không phụ thuộc vào bất kỳ service hay resource nào khác: nó là gốc của
+  # đồ thị phụ thuộc. Chiều đăng ký (7 service → Eureka) được khai ở phía các service đó.
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# KHÔNG CÓ KHỐI c4: service không sở hữu cơ sở dữ liệu nào. Registry là cấu trúc
+# in-memory của Eureka, mất khi container restart.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong Discovery Client Service
+
+  # Service chỉ gồm lớp khởi động và cấu hình; toàn bộ hành vi do starter Eureka Server
+  # cung cấp, repo không viết controller/service/repository nào.
+  components:
+    - id: eureka-server
+      name: DiscoveryClientServiceApplication
+      technology: "@SpringBootApplication + @EnableEurekaServer"
+      description: Bật Eureka Server, phục vụ registry tại /eureka trên cổng 8761
+      exposedPort: 8761
+    - id: registry-store
+      name: Eureka Registry (in-memory)
+      technology: Netflix Eureka
+      description: >-
+        Bảng instance trong bộ nhớ. Self-preservation và eviction để mặc định; hai tham số
+        eureka.server.enable-self-preservation / eviction-interval-timer-in-ms nằm sẵn
+        trong application.properties dưới dạng comment để mô phỏng sự cố giữ instance chết.
+    - id: actuator
+      name: Spring Boot Actuator
+      technology: management.endpoints.web.exposure.include=*
+      description: Cung cấp /actuator/health cho healthcheck của docker-compose
+
+  internalRelations:
+    - { from: eureka-server, to: registry-store, description: Ghi và đọc bảng instance }
+    - { from: eureka-server, to: actuator,       description: Công bố trạng thái sức khoẻ }
+
+  # Không có quan hệ đi ra: service này không gọi bất kỳ hệ thống nào.
+  externalRelations: []

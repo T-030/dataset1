@@ -12,10 +12,12 @@ import unaldi.creditcardservice.entity.dto.CreditCardDTO;
 import unaldi.creditcardservice.entity.request.CreditCardSaveRequest;
 import unaldi.creditcardservice.entity.request.CreditCardUpdateRequest;
 import unaldi.creditcardservice.repository.CreditCardRepository;
+import unaldi.creditcardservice.repository.OutstandingDebtRepository;
 import unaldi.creditcardservice.service.concretes.CreditCardServiceImpl;
 import unaldi.creditcardservice.utils.FailTestMessages;
 import unaldi.creditcardservice.utils.ObjectFactory;
 import unaldi.creditcardservice.utils.client.BankServiceClient;
+import unaldi.creditcardservice.utils.client.InvoiceServiceClient;
 import unaldi.creditcardservice.utils.client.UserServiceClient;
 import unaldi.creditcardservice.utils.client.dto.BankResponse;
 import unaldi.creditcardservice.utils.client.dto.RestResponse;
@@ -53,11 +55,15 @@ class CreditCardServiceTest {
     @Mock
     private CreditCardRepository creditCardRepository;
     @Mock
+    private OutstandingDebtRepository outstandingDebtRepository;
+    @Mock
     private LogProducer logProducer;
     @Mock
     private UserServiceClient userServiceClient;
     @Mock
     private BankServiceClient bankServiceClient;
+    @Mock
+    private InvoiceServiceClient invoiceServiceClient;
     @InjectMocks
     private CreditCardServiceImpl creditCardService;
 

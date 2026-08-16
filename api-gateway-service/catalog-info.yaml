@@ -1,102 +1,173 @@
+# api-gateway-service/catalog-info.yaml
+# API Gateway Service — lối vào duy nhất của hệ thống
+# Chức năng: định tuyến 6 nhóm đường dẫn /api/v1/** tới microservice tương ứng, phân giải
+# tên service qua Eureka và cân bằng tải bằng lb://
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: platform
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: platform  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "0"
+    boundary: edge
+    stateful: "false"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8087"
 
 spec:
-  type: gateway
-  id: api-gateway-service
-  name: API Gateway Service
-  description: Spring Cloud Gateway acting as the single entry point for routing, filtering, and load balancing
+  # type — gateway = tầng định tuyến, không giữ nghiệp vụ và không sở hữu dữ liệu
+  type: gateway  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.api-gateway-service"
+  id: api-gateway-service  # require -> table: service.service_key
+
+  name: API Gateway Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Spring Cloud Gateway đứng trước toàn bộ microservice, là cổng duy nhất lộ ra ngoài
+    (:8087). Sáu route khai bằng predicate Path trong application.properties, uri dạng
+    lb://SERVICE-NAME nên phụ thuộc registry Eureka để phân giải. Không có xác thực,
+    rate limit hay circuit breaker — request được chuyển tiếp nguyên trạng.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
+
   review:
-    branch: "main"
+    branch: "main"  # require để validate merge request
 
-  topology:
+  runtime:
+    language: Java 21
+    framework: Spring Cloud Gateway 2023.0.1 / Spring Boot 3.2.4
+    buildTool: maven
+    libraries: [spring-cloud-starter-gateway, spring-cloud-starter-netflix-eureka-client, spring-boot-starter-actuator]
+    ports:
+      - { number: 8087, name: http, protocol: http, exposure: public }
+  dataClassification: internal
+  statePersistence: none
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
-    - ref: component:banking/discovery-client-service
-      reason: Gateway đăng ký và tìm kiếm các microservice khác qua Eureka
-    - ref: component:banking/user-service
-      reason: Định tuyến các yêu cầu /api/v1/users/**
-    - ref: component:banking/bank-service
-      reason: Định tuyến các yêu cầu /api/v1/banks/**
-    - ref: component:banking/credit-card-service
-      reason: Định tuyến các yêu cầu /api/v1/creditCards/**
-    - ref: component:banking/account-service
-      reason: Định tuyến các yêu cầu /api/v1/accounts/**
-    - ref: component:banking/invoice-service
-      reason: Định tuyến các yêu cầu /api/v1/invoices/**
-    - ref: component:banking/log-service
-      reason: Định tuyến các yêu cầu /api/v1/logs/**
+      reason: Component này là một phần của system banking-system
 
-  # Gateway không có tầng controller/service/repository. "Component" ở đây là
-  # 6 route khai trong application.properties, cộng client discovery cho lb://.
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/gateway-api
+      protocol: http
+      reason: Bề mặt HTTP công khai /api/v1/** cho client bên ngoài
+
+    - ref: consumesApis:banking/eureka-api
+      protocol: http
+      reason: Lấy registry để phân giải lb://SERVICE-NAME
+
+    - ref: consumesApis:banking/users-api
+      protocol: http
+      reason: routes[0] Path=/api/v1/users/** → lb://USER-SERVICE
+
+    - ref: consumesApis:banking/banks-api
+      protocol: http
+      reason: routes[1] Path=/api/v1/banks/** → lb://BANK-SERVICE
+
+    - ref: consumesApis:banking/credit-cards-api
+      protocol: http
+      reason: routes[2] Path=/api/v1/creditCards/** → lb://CREDIT-CARD-SERVICE
+
+    - ref: consumesApis:banking/accounts-api
+      protocol: http
+      reason: routes[3] Path=/api/v1/accounts/** → lb://ACCOUNT-SERVICE
+
+    - ref: consumesApis:banking/invoices-api
+      protocol: http
+      reason: routes[4] Path=/api/v1/invoices/** → lb://INVOICE-SERVICE
+
+    - ref: consumesApis:banking/logs-api
+      protocol: http
+      reason: routes[5] Path=/api/v1/logs/** → lb://LOG-SERVICE
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
+    - ref: component:banking/discovery-client-service
+      protocol: http
+      reason: Đăng ký chính nó và tra cứu registry cho mọi route lb://
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# KHÔNG CÓ KHỐI c4: gateway không sở hữu cơ sở dữ liệu nào và không giữ state.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong API Gateway Service
+
+  # Gateway không có tầng controller/service/repository. "Component" ở đây là 6 route khai
+  # trong application.properties, cộng discovery client dùng để phân giải lb://.
   components:
     - id: discovery-client
       name: EurekaDiscoveryClient
-      role: config
-      tech: "@EnableDiscoveryClient · lb://"
-      calls:
-        - to: component:banking/discovery-client-service
-          protocol: REST
-          reason: Lấy registry để phân giải lb://SERVICE-NAME
-
+      technology: "@EnableDiscoveryClient · lb://"
+      description: Lấy registry để phân giải lb://SERVICE-NAME thành địa chỉ instance
     - id: route-user
       name: routes[0] user-service
-      role: client
-      tech: Path=/api/v1/users/** → lb://USER-SERVICE
-      calls:
-        - to: component:banking/user-service
-          protocol: REST
-          reason: Chuyển tiếp request người dùng
-
+      technology: Path=/api/v1/users/** → lb://USER-SERVICE
+      description: Chuyển tiếp request người dùng
     - id: route-bank
       name: routes[1] bank-service
-      role: client
-      tech: Path=/api/v1/banks/** → lb://BANK-SERVICE
-      calls:
-        - to: component:banking/bank-service
-          protocol: REST
-          reason: Chuyển tiếp request ngân hàng
-
+      technology: Path=/api/v1/banks/** → lb://BANK-SERVICE
+      description: Chuyển tiếp request ngân hàng
     - id: route-credit-card
       name: routes[2] credit-card-service
-      role: client
-      tech: Path=/api/v1/creditCards/** → lb://CREDIT-CARD-SERVICE
-      calls:
-        - to: component:banking/credit-card-service
-          protocol: REST
-          reason: Chuyển tiếp request thẻ tín dụng
-
+      technology: Path=/api/v1/creditCards/** → lb://CREDIT-CARD-SERVICE
+      description: Chuyển tiếp request thẻ tín dụng
     - id: route-account
       name: routes[3] account-service
-      role: client
-      tech: Path=/api/v1/accounts/** → lb://ACCOUNT-SERVICE
-      calls:
-        - to: component:banking/account-service
-          protocol: REST
-          reason: Chuyển tiếp request tài khoản
-
+      technology: Path=/api/v1/accounts/** → lb://ACCOUNT-SERVICE
+      description: Chuyển tiếp request tài khoản
     - id: route-invoice
       name: routes[4] invoice-service
-      role: client
-      tech: Path=/api/v1/invoices/** → lb://INVOICE-SERVICE
-      calls:
-        - to: component:banking/invoice-service
-          protocol: REST
-          reason: Chuyển tiếp request hóa đơn
-
+      technology: Path=/api/v1/invoices/** → lb://INVOICE-SERVICE
+      description: Chuyển tiếp request hoá đơn
     - id: route-log
       name: routes[5] log-service
-      role: client
-      tech: Path=/api/v1/logs/** → lb://LOG-SERVICE
-      calls:
-        - to: component:banking/log-service
-          protocol: REST
-          reason: Chuyển tiếp request tra cứu log
+      technology: Path=/api/v1/logs/** → lb://LOG-SERVICE
+      description: Chuyển tiếp request tra cứu log
+
+  internalRelations:
+    - { from: route-user,        to: discovery-client, description: Phân giải USER-SERVICE }
+    - { from: route-bank,        to: discovery-client, description: Phân giải BANK-SERVICE }
+    - { from: route-credit-card, to: discovery-client, description: Phân giải CREDIT-CARD-SERVICE }
+    - { from: route-account,     to: discovery-client, description: Phân giải ACCOUNT-SERVICE }
+    - { from: route-invoice,     to: discovery-client, description: Phân giải INVOICE-SERVICE }
+    - { from: route-log,         to: discovery-client, description: Phân giải LOG-SERVICE }
+
+  externalRelations:
+    - { from: discovery-client,  to: banking/discovery-client-service, technology: HTTP, description: Lấy registry }
+    - { from: route-user,        to: banking/user-service,             technology: HTTP, description: Chuyển tiếp /api/v1/users/** }
+    - { from: route-bank,        to: banking/bank-service,             technology: HTTP, description: Chuyển tiếp /api/v1/banks/** }
+    - { from: route-credit-card, to: banking/credit-card-service,      technology: HTTP, description: Chuyển tiếp /api/v1/creditCards/** }
+    - { from: route-account,     to: banking/account-service,          technology: HTTP, description: Chuyển tiếp /api/v1/accounts/** }
+    - { from: route-invoice,     to: banking/invoice-service,          technology: HTTP, description: Chuyển tiếp /api/v1/invoices/** }
+    - { from: route-log,         to: banking/log-service,              technology: HTTP, description: Chuyển tiếp /api/v1/logs/** }
