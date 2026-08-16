@@ -1,76 +1,203 @@
+# user-service/catalog-info.yaml
+# User Service — quản lý hồ sơ người dùng
+# Chức năng: CRUD người dùng, cache Redis, phát log nghiệp vụ lên RabbitMQ và là nguồn
+# dữ liệu user cho account-service, credit-card-service, invoice-service gọi vào
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: banking
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "1"
+    boundary: core
+    pii: "true"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8081"
+    # spring.application.name = user-service-broken → instance đăng ký lên Eureka dưới
+    # tên USER-SERVICE-BROKEN, trong khi api-gateway-service định tuyến lb://USER-SERVICE.
+    # Ghi lại đúng hiện trạng để sơ đồ khớp thực tế chạy; ba service gọi Feign không bị
+    # ảnh hưởng vì chúng dùng URL tĩnh chứ không qua registry.
+    eurekaAppName: user-service-broken
 
 spec:
-  type: service
-  id: user-service
-  name: User Service
-  description: Service handling user profiles and transactions
+  # type — service = binary HTTP API, có API surface
+  type: service  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.user-service"
+  id: user-service  # require -> table: service.service_key
+
+  name: User Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Quản lý hồ sơ người dùng: tạo, sửa, xoá, tra cứu theo id và liệt kê. Mỗi thao tác đều
+    phát một bản ghi log lên logs.exchange. Là service bị phụ thuộc nhiều nhất — ba service
+    nghiệp vụ gọi GET /api/v1/users/{userId} đồng bộ trước khi lưu dữ liệu của chúng.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
-  review:
-    branch: "main"
 
-  topology:
+  review:
+    branch: "main"  # require để validate merge request
+
+  runtime:
+    language: Java 21
+    framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
+    buildTool: maven
+    libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
+    ports:
+      - { number: 8081, name: http, protocol: http, exposure: cluster }
+  # dataClassification — bảng users chứa PII (email, số điện thoại, ngày sinh) và cột
+  # password lưu chuỗi thô 50 ký tự, không băm.
+  dataClassification: confidential
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
+      reason: Component này là một phần của system banking-system
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/users-api
+      protocol: http
+      reason: API /api/v1/users cho gateway và ba service nghiệp vụ gọi vào
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
-      reason: Đăng ký dịch vụ với Eureka Server
+      protocol: http
+      reason: Đăng ký instance với Eureka Server
+
     - ref: resource:banking/postgres-db
-      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin người dùng
-    - ref: providesApis:banking/user-service
-      protocol: REST
-      reason: API /api/v1/users cho gateway và các service khác gọi vào
+      protocol: postgresql
+      reason: Bảng users trong database dùng chung banking-microservices
+
+    - ref: resource:banking/redis-db
+      protocol: redis
+      reason: Cache user / users với prefix user-service
+
+    - ref: resource:banking/rabbitmq-log
+      protocol: rabbitmq
+      reason: Broker nhận log nghiệp vụ
+
+    # ── RabbitMQ queues ───────────────────────────────────────────────────────
+    - ref: publishesTo:banking/logs.queue
+      protocol: rabbitmq
+      reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
+
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
+# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
+# và blast_radius của những service khác bị tính sai theo.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong User Service
 
   components:
     - id: user-controller
       name: UserController
-      role: controller
-      tech: REST · /api/v1/users
-      calls:
-        - to: user-service-impl
-          reason: Ủy quyền toàn bộ nghiệp vụ
-
+      technology: Spring MVC · /api/v1/users
+      description: Năm endpoint POST / PUT / DELETE / GET by id / GET all
+      exposedPort: 8081
     - id: user-service-impl
       name: UserServiceImpl
-      role: service
-      tech: Spring @Service · @Cacheable/@CacheEvict
-      calls:
-        - to: user-repository
-          reason: Đọc/ghi bản ghi User
-        - to: user-mapper
-          reason: Chuyển Request/Entity/DTO
-        - to: log-producer
-          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
-        - to: resource:banking/redis-db
-          protocol: Spring Cache
-          reason: Cache users / user
-
+      technology: Spring @Service · @Cacheable / @CachePut / @CacheEvict
+      description: Toàn bộ nghiệp vụ, tự gọi mapper, repository và log producer
     - id: user-mapper
       name: UserMapper
-      role: mapper
-      tech: MapStruct
-
+      technology: MapStruct 1.5.5
+      description: Chuyển Request ↔ Entity ↔ DTO
     - id: user-repository
       name: UserRepository
-      role: repository
-      tech: Spring Data JPA
-      calls:
-        - to: resource:banking/postgres-db
-          protocol: JDBC
-          reason: Bảng user trong banking-microservices
-
+      technology: Spring Data JPA · JpaRepository<User, Long>
+      description: Chỉ dùng phương thức có sẵn, không khai query tuỳ biến
+    - id: redis-cache
+      name: RedisConfiguration
+      technology: RedisCacheManager · TTL 1 giờ · prefix user-service
+      description: Cấu hình cache user / users, serialize JSON có type info
     - id: log-producer
       name: LogProducer
-      role: producer
-      tech: Spring AMQP · logs.exchange
-      calls:
-        - to: publishesTo:banking/logs.queue
-          protocol: rabbitmq
-          reason: convertAndSend theo routingKey logs.routingKey
+      technology: Spring AMQP · logs.exchange
+      description: convertAndSend theo routingKey logs.routingKey
+
+  internalRelations:
+    - { from: user-controller,   to: user-service-impl, description: Uỷ quyền toàn bộ nghiệp vụ }
+    - { from: user-service-impl, to: user-repository,   description: Đọc/ghi bản ghi User }
+    - { from: user-service-impl, to: user-mapper,       description: Chuyển Request/Entity/DTO }
+    - { from: user-service-impl, to: redis-cache,       description: Đọc/xoá cache trước và sau mỗi thao tác }
+    - { from: user-service-impl, to: log-producer,      description: Ghi log mỗi thao tác POST/PUT/DELETE/GET }
+
+  externalRelations:
+    - { from: user-repository, to: banking/postgres-db,   technology: JDBC,     description: Bảng users }
+    - { from: redis-cache,     to: banking/redis-db,      technology: RESP,     description: Cache user / users }
+    - { from: log-producer,    to: banking/logs.queue,    technology: rabbitmq, description: Phát log qua logs.exchange }
+
+c4:
+  diagramType: classDiagram
+  title: C4 — Mô hình dữ liệu User Service
+
+  relationalDatabase:
+    engine: PostgreSQL (image postgres:latest)
+    database: banking-microservices
+    schema: public
+    # Không có Flyway/Liquibase. Lược đồ do Hibernate sinh lúc khởi động.
+    migrationTool: none
+    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    encryptionAtRest: false
+    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
+    # HikariCP bị siết còn 1 kết nối, timeout 2 giây — chỉ một truy vấn chạy tại một thời điểm.
+    connectionPool: { maxConns: 1, connectionTimeoutMs: 2000 }
+
+  entities:
+    - name: users
+      stereotype: aggregate-root
+      description: Hồ sơ người dùng, khoá ngoại logic của accounts, credit_cards và invoices
+      columns:
+        - { name: id,           type: BIGSERIAL,     key: PK, nullable: false }
+        - { name: username,     type: VARCHAR(50),   nullable: false }
+        - { name: password,     type: VARCHAR(50),   nullable: false, sensitive: true, description: Lưu chuỗi thô, không băm, không mã hoá }
+        - { name: email,        type: VARCHAR(100),  nullable: false, pii: true }
+        - { name: first_name,   type: VARCHAR(50),   nullable: false, pii: true }
+        - { name: last_name,    type: VARCHAR(50),   nullable: false, pii: true }
+        - { name: phone_number, type: VARCHAR(255),  nullable: false, pii: true, description: Không khai length nên Hibernate lấy mặc định 255 }
+        - { name: birth_date,   type: DATE,          nullable: false, pii: true }
+        - { name: gender,       type: VARCHAR(255),  nullable: false, description: "Enum lưu dạng STRING: MALE, FEMALE" }
+      # Không có UNIQUE trên username/email và không có index ngoài khoá chính.
+      constraints: []
+      indexes: []
+
+  # Không có quan hệ nội bộ: service chỉ sở hữu một bảng duy nhất.
+  relations: []
+
+  externalReaders:
+    # Ba service dưới đây KHÔNG đọc bảng users trực tiếp — chúng gọi REST và giữ userId
+    # như một khoá ngoài logic, không có ràng buộc FK ở tầng cơ sở dữ liệu.
+    - { consumer: banking/account-service,     access: api-only, via: "GET /api/v1/users/{userId}" }
+    - { consumer: banking/credit-card-service, access: api-only, via: "GET /api/v1/users/{userId}" }
+    - { consumer: banking/invoice-service,     access: api-only, via: "GET /api/v1/users/{userId}" }

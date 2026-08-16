@@ -1,109 +1,246 @@
+# credit-card-service/catalog-info.yaml
+# Credit Card Service — quản lý thẻ tín dụng và dư nợ
+# Chức năng: CRUD thẻ tín dụng, kiểm tra userId/bankId tồn tại qua Feign trước khi lưu,
+# cache Redis, phát log nghiệp vụ lên RabbitMQ
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: banking
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "2"
+    boundary: core
+    pii: "true"
+    card-data: "true"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8083"
 
 spec:
-  type: service
-  id: credit-card-service
-  name: Credit Card Service
-  description: Service handling credit cards and credit transactions
+  # type — service = binary HTTP API, có API surface
+  type: service  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.credit-card-service"
+  id: credit-card-service  # require -> table: service.service_key
+
+  name: Credit Card Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Quản lý thẻ tín dụng: số thẻ, ngày hết hạn, CVV, hạn mức và dư nợ. Trước khi lưu, gọi
+    đồng bộ User Service và Bank Service để chắc chắn userId và bankId tồn tại; ngoài ra
+    lộ hai endpoint đọc xuyên service /users/{userId} và /banks/{bankId}.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
-  review:
-    branch: "main"
 
-  topology:
+  review:
+    branch: "main"  # require để validate merge request
+
+  runtime:
+    language: Java 21
+    framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
+    buildTool: maven
+    libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-openfeign, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
+    ports:
+      - { number: 8083, name: http, protocol: http, exposure: cluster }
+  # dataClassification — bảng credit_cards giữ số thẻ và CVV dạng thô. Repo là môi trường
+  # giả lập, không có tuyên bố tuân thủ PCI-DSS nào; ghi nhận mức nhạy cảm để đánh giá rủi ro.
+  dataClassification: restricted
+  syncDependencyPolicy:
+    resolution: static-url  # @FeignClient(url = ...) — không qua Eureka, không cân bằng tải
+    timeout: none
+    retry: "3 lần liên tiếp, không giãn cách"  # áp dụng cho lời gọi lấy hoá đơn
+    circuitBreaker: none
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
+      reason: Component này là một phần của system banking-system
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/credit-cards-api
+      protocol: http
+      reason: API /api/v1/creditCards cho gateway định tuyến vào
+
+    - ref: consumesApis:banking/users-api
+      protocol: http
+      reason: Kiểm tra userId tồn tại trước khi lưu và phục vụ GET /creditCards/users/{userId}
+
+    - ref: consumesApis:banking/banks-api
+      protocol: http
+      reason: Kiểm tra bankId tồn tại trước khi lưu và phục vụ GET /creditCards/banks/{bankId}
+
+    - ref: consumesApis:banking/invoices-api
+      protocol: http
+      reason: Lấy hoá đơn của khách hàng để đặt dư nợ ban đầu lúc phát hành thẻ
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
-      reason: Đăng ký dịch vụ với Eureka Server
+      protocol: http
+      reason: Đăng ký instance với Eureka Server
+
     - ref: resource:banking/postgres-db
-      reason: Cơ sở dữ liệu PostgreSQL lưu trữ thông tin thẻ tín dụng và nợ
+      protocol: postgresql
+      reason: Bảng credit_cards, truy vấn tổng hợp dư nợ và cập nhật trạng thái trên bảng invoices
+
     - ref: resource:banking/redis-db
-      reason: Redis cache cho thông tin thẻ tín dụng
+      protocol: redis
+      reason: Cache credit_card / credit_cards / credit_card_user / credit_card_bank
+
     - ref: resource:banking/rabbitmq-log
-      reason: RabbitMQ broker dùng để gửi log
+      protocol: rabbitmq
+      reason: Broker nhận log nghiệp vụ
+
+    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
-      reason: Gửi các log hoạt động đến hàng đợi logs.queue
-    - ref: consumesApis:banking/user-service
-      protocol: REST
-      reason: FeignClient gọi user-service để lấy thông tin user
-    - ref: consumesApis:banking/bank-service
-      protocol: REST
-      reason: FeignClient gọi bank-service để lấy thông tin ngân hàng
+      reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
 
-  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
+# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
+# và blast_radius của những service khác bị tính sai theo.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong Credit Card Service
+
   components:
     - id: credit-card-controller
       name: CreditCardController
-      role: controller
-      tech: REST · /api/v1/creditCards
-      calls:
-        - to: credit-card-service-impl
-          reason: Ủy quyền toàn bộ nghiệp vụ
-
+      technology: Spring MVC · /api/v1/creditCards
+      description: Bảy endpoint — năm CRUD cộng /users/{userId} và /banks/{bankId}
+      exposedPort: 8083
     - id: credit-card-service-impl
       name: CreditCardServiceImpl
-      role: service
-      tech: Spring @Service · @Cacheable/@CacheEvict
-      calls:
-        - to: credit-card-repository
-          reason: Đọc/ghi bản ghi CreditCard
-        - to: credit-card-mapper
-          reason: Chuyển Request/Entity/DTO
-        - to: user-service-client
-          reason: Kiểm tra userId tồn tại trước khi lưu
-        - to: bank-service-client
-          reason: Kiểm tra bankId tồn tại trước khi lưu
-        - to: log-producer
-          reason: Ghi log mỗi thao tác POST/PUT/DELETE/GET
-        - to: resource:banking/redis-db
-          protocol: Spring Cache
-          reason: Cache creditCards / creditCard / creditCard-user / creditCard-bank
-
+      technology: Spring @Service · @Cacheable / @CachePut / @CacheEvict
+      description: Toàn bộ nghiệp vụ, điều phối các Feign client trước khi ghi và làm mới dư nợ lúc đọc
     - id: credit-card-mapper
       name: CreditCardMapper
-      role: mapper
-      tech: MapStruct
-
+      technology: MapStruct 1.5.5
+      description: Chuyển Request ↔ Entity ↔ DTO
     - id: credit-card-repository
       name: CreditCardRepository
-      role: repository
-      tech: Spring Data JPA
-      calls:
-        - to: resource:banking/postgres-db
-          protocol: JDBC
-          reason: Bảng credit_card trong banking-microservices
-
+      technology: Spring Data JPA · JpaRepository<CreditCard, Long>
+      description: Chỉ dùng phương thức có sẵn, không khai query tuỳ biến
     - id: user-service-client
       name: UserServiceClient
-      role: client
-      tech: OpenFeign · user-service:8081
-      calls:
-        - to: consumesApis:banking/user-service
-          protocol: REST
-          reason: GET /api/v1/users/{userId}
-
+      technology: OpenFeign · url tĩnh http://${USER_SERVICE_HOST}:8081
+      description: GET /api/v1/users/{userId} — không timeout, không circuit breaker
     - id: bank-service-client
       name: BankServiceClient
-      role: client
-      tech: OpenFeign · bank-service:8082
-      calls:
-        - to: consumesApis:banking/bank-service
-          protocol: REST
-          reason: GET /api/v1/banks/{bankId}
-
+      technology: OpenFeign · url tĩnh http://${BANK_SERVICE_HOST}:8082
+      description: GET /api/v1/banks/{bankId} — không timeout, không circuit breaker
+    - id: invoice-service-client
+      name: InvoiceServiceClient
+      technology: OpenFeign · url tĩnh http://${INVOICE_SERVICE_HOST}:8085
+      description: >-
+        GET /api/v1/invoices — lấy danh sách hoá đơn rồi lọc theo userId ở phía gọi.
+        Thử lại tối đa 3 lần rồi trả về 0.0 nếu vẫn lỗi
+    - id: outstanding-debt-repository
+      name: OutstandingDebtRepository
+      technology: Spring JdbcTemplate · SQL thuần
+      description: >-
+        SELECT COALESCE(SUM(amount), 0) FROM invoices theo user_id, và UPDATE invoices
+        SET payment_status = 'PAID' khi dư nợ thẻ về 0
+    - id: redis-cache
+      name: RedisConfiguration
+      technology: RedisCacheManager · TTL 1 giờ · prefix credit-card-service
+      description: Cache credit_card / credit_cards / credit_card_user / credit_card_bank
     - id: log-producer
       name: LogProducer
-      role: producer
-      tech: Spring AMQP · logs.exchange
-      calls:
-        - to: publishesTo:banking/logs.queue
-          protocol: rabbitmq
-          reason: convertAndSend theo routingKey logs.routingKey
+      technology: Spring AMQP · logs.exchange
+      description: convertAndSend theo routingKey logs.routingKey
+
+  internalRelations:
+    - { from: credit-card-controller,   to: credit-card-service-impl, description: Uỷ quyền toàn bộ nghiệp vụ }
+    - { from: credit-card-service-impl, to: user-service-client,      description: Bước 1 — kiểm tra userId tồn tại }
+    - { from: credit-card-service-impl, to: bank-service-client,      description: Bước 2 — kiểm tra bankId tồn tại }
+    - { from: credit-card-service-impl, to: invoice-service-client,   description: Bước 3 — tính dư nợ ban đầu từ hoá đơn của khách hàng }
+    - { from: credit-card-service-impl, to: credit-card-repository,   description: Bước 4 — đọc/ghi bản ghi CreditCard }
+    - { from: credit-card-service-impl, to: outstanding-debt-repository, description: Làm mới debt_amount trong findById và mỗi phần tử của findAll }
+    - { from: credit-card-service-impl, to: outstanding-debt-repository, description: Đánh dấu hoá đơn đã trả sau khi cập nhật thẻ về dư nợ 0 }
+    - { from: credit-card-service-impl, to: credit-card-mapper,       description: Chuyển Request/Entity/DTO }
+    - { from: credit-card-service-impl, to: redis-cache,              description: Đọc/xoá cache trước và sau mỗi thao tác }
+    - { from: credit-card-service-impl, to: log-producer,             description: Ghi log mỗi thao tác POST/PUT/DELETE/GET }
+
+  externalRelations:
+    - { from: user-service-client,     to: banking/user-service, technology: HTTP,     description: "GET /api/v1/users/{userId}" }
+    - { from: bank-service-client,     to: banking/bank-service, technology: HTTP,     description: "GET /api/v1/banks/{bankId}" }
+    - { from: invoice-service-client,  to: banking/invoice-service, technology: HTTP,  description: GET /api/v1/invoices }
+    - { from: credit-card-repository,  to: banking/postgres-db,  technology: JDBC,     description: Bảng credit_cards }
+    - { from: outstanding-debt-repository, to: banking/postgres-db, technology: JDBC,  description: Truy vấn tổng hợp và cập nhật trạng thái trên bảng invoices }
+    - { from: redis-cache,             to: banking/redis-db,     technology: RESP,     description: Bốn vùng cache của service }
+    - { from: log-producer,            to: banking/logs.queue,   technology: rabbitmq, description: Phát log qua logs.exchange }
+
+c4:
+  diagramType: classDiagram
+  title: C4 — Mô hình dữ liệu Credit Card Service
+
+  relationalDatabase:
+    engine: PostgreSQL (image postgres:latest)
+    database: banking-microservices
+    schema: public
+    migrationTool: none
+    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    encryptionAtRest: false
+    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
+    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+
+  entities:
+    - name: credit_cards
+      stereotype: aggregate-root
+      description: Thẻ tín dụng của một người dùng, phát hành bởi một ngân hàng
+      columns:
+        - { name: id,              type: BIGSERIAL,          key: PK, nullable: false }
+        - { name: card_number,     type: VARCHAR(20),        nullable: false, sensitive: true, description: Số thẻ lưu thô, không mã hoá, không che }
+        - { name: user_id,         type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới users.id, không có ràng buộc FK }
+        - { name: expiration_date, type: DATE,               nullable: false, description: Trường khai @Past trong entity, ngược nghĩa với ngày hết hạn }
+        - { name: cvv,             type: VARCHAR(4),         nullable: false, sensitive: true, description: CVV lưu thô — dữ liệu không được phép lưu trong hệ thống thật }
+        - { name: credit_limit,    type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
+        - { name: debt_amount,     type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
+        - { name: bank_id,         type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới banks.id, không có ràng buộc FK }
+      # Không có UNIQUE trên card_number và không có index ngoài khoá chính.
+      # Ràng buộc bean validation không có tác dụng: javax.persistence.validation.mode = none.
+      constraints: []
+      indexes: []
+
+  relations: []
+
+  externalRelations:
+    - { from: credit_cards.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+    - { from: credit_cards.bank_id, to: banking/bank-service, entity: banks, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+
+  # foreignTables — bảng của service khác mà service này truy vấn trực tiếp trên
+  # cùng instance PostgreSQL, ngoài đường REST.
+  foreignTables:
+    - { table: invoices, owner: banking/invoice-service, access: read-write, mode: "aggregate_query + status_update", usedBy: outstanding-debt-repository }
+
+  externalReaders: []

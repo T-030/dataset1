@@ -1,78 +1,198 @@
+# log-service/catalog-info.yaml
+# Log Service — thu thập log tập trung
+# Chức năng: tiêu thụ logs.queue bằng @RabbitListener, ghi thẳng xuống MongoDB và lộ
+# REST /api/v1/logs để tra cứu
+# ─────────────────────────────────────────────────────────────────────────────
+
+# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  domain: platform
-  system: banking-system
-  namespace: banking
+  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
+  domain: platform  # require -> table: service.domain_code (VARCHAR 128)
+
+  # system — bounded context. service_key = "{system}.{spec.id}"
+  system: banking-system  # require -> table: service.system_code
+
+  # namespace — K8s / IAM namespace scope
+  namespace: banking  # require -> table: service.namespace
+
+  labels:
+    tier: "2"
+    boundary: platform
+    pii: "false"
+  annotations:
+    repo: https://github.com/emre-unaldi/Banking-Microservices
+    defaultBranch: main
+    port: "8086"
 
 spec:
-  type: service
-  id: log-service
-  name: Log Service
-  description: Service consuming log messages from RabbitMQ and saving them to MongoDB
+  # type — service = binary HTTP API, có API surface (đồng thời là consumer của queue)
+  type: service  # require -> table: service.service_type
+
+  # id — service_key = "banking-system.log-service"
+  id: log-service  # require -> table: service.service_key
+
+  name: Log Service  # require -> table: service.name
+
+  # optional -> table: service.description
+  description: >-
+    Điểm tập kết log của cả hệ thống. Năm service nghiệp vụ phát bản ghi log lên
+    logs.exchange; service này lắng nghe logs.queue, ánh xạ LogResponse thành Log và lưu
+    vào collection logs trên MongoDB. Đồng thời lộ REST CRUD /api/v1/logs để tra cứu.
+    Là service duy nhất dùng MongoDB và là consumer duy nhất của hàng đợi.
+
   owners:
-    members:
+    members:  # require at least 1 techlead -> table: service_member
       - user: emree.unaldi@gmail.com
         role: techlead
-  review:
-    branch: "main"
 
-  topology:
+  review:
+    branch: "main"  # require để validate merge request
+
+  runtime:
+    language: Java 21
+    framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
+    buildTool: maven
+    libraries: [spring-boot-starter-data-mongodb, spring-boot-starter-amqp, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
+    ports:
+      - { number: 8086, name: http, protocol: http, exposure: cluster }
+  dataClassification: internal
+  # Không cache Redis, không PostgreSQL. Consumer không có dead-letter queue, không retry
+  # policy: message lỗi bị loại khỏi queue mà không lưu lại được ở đâu.
+  consumerPolicy:
+    concurrency: default
+    deadLetterQueue: none
+    retry: none
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
     - ref: system:banking/banking-system
-      reason: Component này là một phần của hệ thống banking-system
+      reason: Component này là một phần của system banking-system
+
+    # ── APIs ──────────────────────────────────────────────────────────────────
+    - ref: providesApis:banking/logs-api
+      protocol: http
+      reason: API /api/v1/logs cho gateway định tuyến vào để tra cứu log
+
+    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
-      reason: Đăng ký dịch vụ với Eureka Server
+      protocol: http
+      reason: Đăng ký instance với Eureka Server
+
     - ref: resource:banking/mongo
-      reason: MongoDB lưu trữ logs nhận được từ các service khác
+      protocol: mongodb
+      reason: Collection logs trong database banking-microservices
+
     - ref: resource:banking/rabbitmq-log
-      reason: RabbitMQ broker dùng để nhận log
+      protocol: rabbitmq
+      reason: Broker cung cấp hàng đợi log
+
+    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: consumesFrom:banking/logs.queue
       protocol: rabbitmq
-      reason: Nhận logs được gửi đến hàng đợi logs.queue từ các service khác
+      reason: Nhận log do 5 service nghiệp vụ phát lên và lưu xuống MongoDB
 
-  # Cấu trúc bên trong service — nguồn dữ liệu cho sơ đồ C3.
-  # Lưu ý: `calls` chỉ diễn tả chiều ĐI RA. Quan hệ logs.queue → LogConsumer là
-  # chiều đi vào nên khai ở `topology` (consumesFrom) và hiện trên C2, không
-  # khai ở đây để tránh vẽ mũi tên ngược.
+# ═════════════════════════════════════════════════════════════════════════════
+# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
+#
+#   c3 → C4Component  : các khối bên trong container
+#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
+#
+# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
+# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
+#
+# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
+# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
+# dependency graph.
+#
+# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
+# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
+# và blast_radius của những service khác bị tính sai theo.
+# ═════════════════════════════════════════════════════════════════════════════
+c3:
+  diagramType: C4Component
+  title: C3 — Thành phần bên trong Log Service
+
+  # Lưu ý: `internalRelations` chỉ diễn tả chiều ĐI RA. Quan hệ logs.queue → LogConsumer
+  # là chiều đi vào nên khai ở topology (consumesFrom) và hiện trên C2.
   components:
     - id: log-controller
       name: LogController
-      role: controller
-      tech: REST · /api/v1/logs
-      calls:
-        - to: log-service-impl
-          reason: Ủy quyền toàn bộ nghiệp vụ
-
+      technology: Spring MVC · /api/v1/logs
+      description: Năm endpoint POST / PUT / DELETE / GET by id / GET all
+      exposedPort: 8086
     - id: log-consumer
       name: LogConsumer
-      role: consumer
-      tech: "@RabbitListener · logs.queue"
-      calls:
-        - to: log-mapper
-          reason: Chuyển LogResponse thành Log
-        - to: log-repository
-          reason: Lưu thẳng bản ghi Log xuống MongoDB
-
+      technology: "@RabbitListener · logs.queue"
+      description: >-
+        Nhận LogResponse, ánh xạ bằng LogMapper.INSTANCE rồi gọi thẳng repository —
+        bỏ qua LogServiceImpl, nên hai đường ghi không dùng chung logic nghiệp vụ
     - id: log-service-impl
       name: LogServiceImpl
-      role: service
-      tech: Spring @Service
-      calls:
-        - to: log-repository
-          reason: Đọc/ghi bản ghi Log
-        - to: log-mapper
-          reason: Chuyển Request/Entity/DTO
-
+      technology: Spring @Service
+      description: Nghiệp vụ cho đường REST, không cache
     - id: log-mapper
       name: LogMapper
-      role: mapper
-      tech: MapStruct
-
+      technology: MapStruct 1.5.5
+      description: Chuyển Request/Response ↔ Entity ↔ DTO
     - id: log-repository
       name: LogRepository
-      role: repository
-      tech: Spring Data MongoDB
-      calls:
-        - to: resource:banking/mongo
-          protocol: MongoDB Wire
-          reason: Collection log trong banking-microservices
+      technology: Spring Data MongoDB · MongoRepository<Log, String>
+      description: Chỉ dùng phương thức có sẵn, không khai query tuỳ biến
+
+  internalRelations:
+    - { from: log-controller,  to: log-service-impl, description: Uỷ quyền toàn bộ nghiệp vụ }
+    - { from: log-consumer,    to: log-mapper,       description: Chuyển LogResponse thành Log }
+    - { from: log-consumer,    to: log-repository,   description: Lưu thẳng bản ghi Log xuống MongoDB }
+    - { from: log-service-impl, to: log-repository,  description: Đọc/ghi bản ghi Log }
+    - { from: log-service-impl, to: log-mapper,      description: Chuyển Request/Entity/DTO }
+
+  externalRelations:
+    - { from: log-repository, to: banking/mongo, technology: MongoDB Wire, description: Collection logs trong banking-microservices }
+
+c4:
+  diagramType: classDiagram
+  title: C4 — Mô hình dữ liệu Log Service
+
+  # Kho dữ liệu là MongoDB nên khai documentDatabase thay cho relationalDatabase.
+  documentDatabase:
+    engine: MongoDB (image mongo:latest)
+    database: banking-microservices
+    authenticationDatabase: admin
+    schemaEnforcement: none  # không có JSON schema validator, cấu trúc do @Document quyết định
+    encryptionAtRest: false
+    # Mặc định driver là 100 kết nối. Trong application.properties có sẵn một dòng comment
+    # ghi đè URI với maxPoolSize=1 để mô phỏng sự cố cạn kiệt connection pool.
+    connectionPool: { maxConns: 100 }
+
+  collections:
+    - name: logs
+      stereotype: aggregate-root
+      description: Một bản ghi log do service nghiệp vụ phát ra, hoặc tạo tay qua REST
+      fields:
+        - { name: _id,            type: ObjectId,  key: PK, nullable: false, description: Ánh xạ vào thuộc tính String id }
+        - { name: service_name,   type: string,    nullable: true, description: Tên service phát log, ví dụ account-service }
+        - { name: operation_type, type: string,    nullable: true, description: "Enum: POST, PUT, DELETE, GET" }
+        - { name: log_type,       type: string,    nullable: true, description: "Enum: ERROR, WARN, INFO" }
+        - { name: message,        type: string,    nullable: true }
+        - { name: timestamp,      type: date,      nullable: true, description: LocalDateTime do phía phát tự gán }
+        - { name: exception,      type: string,    nullable: true, description: Rỗng với log thành công }
+      # Không có index ngoài _id: truy vấn theo service_name hay timestamp phải quét toàn bộ collection.
+      indexes: []
+      # Không có TTL index và không có chính sách xoá — collection tăng vô hạn.
+      retentionPolicy: null
+
+  relations: []
+
+  # Nguồn ghi vào collection này, theo hai đường độc lập nhau.
+  writers:
+    - { producer: banking/user-service,        via: banking/logs.queue, path: LogConsumer }
+    - { producer: banking/bank-service,        via: banking/logs.queue, path: LogConsumer }
+    - { producer: banking/credit-card-service, via: banking/logs.queue, path: LogConsumer }
+    - { producer: banking/account-service,     via: banking/logs.queue, path: LogConsumer }
+    - { producer: banking/invoice-service,     via: banking/logs.queue, path: LogConsumer }
+    - { producer: banking/api-gateway-service, via: banking/logs-api,   path: LogController, note: Đường REST mở cho mọi client qua gateway }
+
+  externalReaders: []
