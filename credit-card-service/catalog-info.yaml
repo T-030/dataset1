@@ -63,8 +63,9 @@ spec:
   syncDependencyPolicy:
     resolution: static-url  # @FeignClient(url = ...) — không qua Eureka, không cân bằng tải
     timeout: none
-    retry: "3 lần liên tiếp, không giãn cách"  # áp dụng cho lời gọi lấy hoá đơn
+    retry: { attempts: 3, backoff: none, appliesTo: banking/invoices-api }
     circuitBreaker: none
+    fallbackOnFailure: { value: "0.0", surfacedToCaller: false }
 
   # topology — ref = "{kind}:{namespace}/{name}"
   topology:  # optional -> table: service_dependency
@@ -161,15 +162,20 @@ c3:
     - id: invoice-service-client
       name: InvoiceServiceClient
       technology: OpenFeign · url tĩnh http://${INVOICE_SERVICE_HOST}:8085
-      description: >-
-        GET /api/v1/invoices — lấy danh sách hoá đơn rồi lọc theo userId ở phía gọi.
-        Thử lại tối đa 3 lần rồi trả về 0.0 nếu vẫn lỗi
+      operations: [GET /api/v1/invoices]
+      pagination: none
+      filtering: client-side  # lọc theo userId sau khi đã nhận toàn bộ danh sách
+      invokedFrom: [save]
+      description: Lấy hoá đơn của khách hàng để đặt dư nợ ban đầu cho thẻ
     - id: outstanding-debt-repository
       name: OutstandingDebtRepository
       technology: Spring JdbcTemplate · SQL thuần
-      description: >-
-        SELECT COALESCE(SUM(amount), 0) FROM invoices theo user_id, và UPDATE invoices
-        SET payment_status = 'PAID' khi dư nợ thẻ về 0
+      statements:
+        - { sql: "SELECT COALESCE(SUM(amount), 0) FROM invoices WHERE user_id = ?", table: invoices, access: read }
+        - { sql: "UPDATE invoices SET payment_status = 'PAID' WHERE user_id = ?", table: invoices, access: write }
+      callPattern: per-row  # findAll chạy một truy vấn cho mỗi thẻ trong danh sách
+      invokedFrom: [findById, findAll, update]
+      description: Tính và đồng bộ dư nợ thẻ theo hoá đơn của khách hàng
     - id: redis-cache
       name: RedisConfiguration
       technology: RedisCacheManager · TTL 1 giờ · prefix credit-card-service
