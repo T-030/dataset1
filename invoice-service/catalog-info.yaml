@@ -51,7 +51,25 @@ spec:
     retry: none
     circuitBreaker: none
 
+<<<<<<< HEAD
   topology:
+=======
+  # transactionBoundary — phạm vi transaction của luồng ghi chính
+  transactionBoundary:
+    method: save
+    propagation: REQUIRED
+    steps:
+      - { order: 1, kind: remote-call,  target: banking/users-api }
+      - { order: 2, kind: remote-call,  target: banking/credit-cards-api }
+      - { order: 3, kind: db-write,     target: banking/postgres-db, table: invoices }
+      - { order: 4, kind: remote-write, target: banking/credit-cards-api }
+      - { order: 5, kind: publish,      target: banking/logs.queue }
+    compensation: none
+
+  # topology — ref = "{kind}:{namespace}/{name}"
+  topology:  # optional -> table: service_dependency
+    # ── Membership ────────────────────────────────────────────────────────────
+>>>>>>> 62aa550dfe999501f3cc498a7ed07770a4bc2b27
     - ref: system:banking/banking-system
       reason: Component này là một phần của system banking-system
 
@@ -119,17 +137,27 @@ c3:
     - id: user-service-client
       name: UserServiceClient
       technology: OpenFeign · url tĩnh http://${USER_SERVICE_HOST}:8081
-      description: GET /api/v1/users/{userId} — không timeout, không circuit breaker
+      operations: ["GET /api/v1/users/{userId}"]
+      callPattern: per-item  # findAll gọi một lần cho mỗi hoá đơn trong danh sách
+      invokedFrom: [save, update, findAll, findInvoiceUserByUserId]
+      description: Kiểm tra người dùng còn hiệu lực
     - id: credit-card-service-client
       name: CreditCardServiceClient
       technology: OpenFeign · url tĩnh http://${CREDIT_CARD_SERVICE_HOST}:8083
-      description: >-
-        GET /api/v1/creditCards/users/{userId} xác nhận khách hàng; GET /api/v1/creditCards
-        lấy toàn bộ thẻ để tìm thẻ của khách; PUT /api/v1/creditCards ghi lại thẻ với dư nợ mới
+      operations:
+        - { method: GET, path: "/api/v1/creditCards/users/{userId}", purpose: xác nhận khách hàng }
+        - { method: GET, path: /api/v1/creditCards, purpose: tìm thẻ của khách, pagination: none, filtering: client-side }
+        - { method: PUT, path: /api/v1/creditCards, purpose: ghi lại thẻ với dư nợ mới, writePattern: read-modify-write, locking: none }
+      invokedFrom: [save]
+      description: Xác nhận khách hàng và cộng số tiền hoá đơn vào dư nợ thẻ
     - id: invoice-audit-consumer
       name: InvoiceAuditConsumer
       technology: "@RabbitListener · logs.queue"
-      description: Đếm số thao tác hoá đơn đọc được từ luồng log, giữ trong AtomicLong
+      queue: banking/logs.queue
+      consumerGroup: default  # không khai queue riêng, dùng chung hàng đợi với log-service
+      acknowledgeMode: auto
+      state: AtomicLong trong bộ nhớ tiến trình
+      description: Đếm số thao tác hoá đơn đọc được từ luồng log
     - id: redis-cache
       name: RedisConfiguration
       technology: RedisCacheManager · TTL 1 giờ · prefix invoice-service
@@ -194,3 +222,7 @@ c4:
 
   externalReaders:
     - { consumer: banking/credit-card-service, tables: [invoices], access: read-write, mode: "aggregate_query + status_update", via: JDBC }
+
+  # foreignWrites — dữ liệu do service khác sở hữu mà service này ghi vào, qua REST.
+  foreignWrites:
+    - { entity: credit_cards, owner: banking/credit-card-service, via: PUT /api/v1/creditCards, pattern: read-modify-write, locking: none, compensation: none }
