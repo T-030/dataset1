@@ -1,21 +1,11 @@
-# account-service/catalog-info.yaml
-# Account Service — quản lý tài khoản thanh toán
-# Chức năng: CRUD tài khoản, kiểm tra userId/bankId tồn tại qua Feign trước khi lưu,
-# cache Redis, phát log nghiệp vụ lên RabbitMQ
-# ─────────────────────────────────────────────────────────────────────────────
-
-# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
-  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+  domain: banking
 
-  # system — bounded context. service_key = "{system}.{spec.id}"
-  system: banking-system  # require -> table: service.system_code
+  system: banking-system
 
-  # namespace — K8s / IAM namespace scope
-  namespace: banking  # require -> table: service.namespace
+  namespace: banking
 
   labels:
     tier: "2"
@@ -27,15 +17,12 @@ metadata:
     port: "8084"
 
 spec:
-  # type — service = binary HTTP API, có API surface
-  type: service  # require -> table: service.service_type
+  type: service
 
-  # id — service_key = "banking-system.account-service"
-  id: account-service  # require -> table: service.service_key
+  id: account-service
 
-  name: Account Service  # require -> table: service.name
+  name: Account Service
 
-  # optional -> table: service.description
   description: >-
     Quản lý tài khoản: số tài khoản, số dư, loại tài khoản (CURRENT/DEPOSIT/CREDIT) và
     trạng thái (ACTIVE/INACTIVE). Trước khi lưu, gọi đồng bộ User Service và Bank Service
@@ -43,12 +30,12 @@ spec:
     /users/{userId} và /banks/{bankId} trả về dữ liệu lấy từ hai service đó.
 
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
   review:
-    branch: "main"  # require để validate merge request
+    branch: "main"
 
   runtime:
     language: Java 21
@@ -58,22 +45,16 @@ spec:
     ports:
       - { number: 8084, name: http, protocol: http, exposure: cluster }
   dataClassification: internal
-  # Feign client trỏ URL tĩnh (@FeignClient(url = "http://${USER_SERVICE_HOST:localhost}:8081"))
-  # nên KHÔNG đi qua Eureka và KHÔNG có cân bằng tải. Không cấu hình timeout, retry hay
-  # circuit breaker: User/Bank Service chậm thì request tại đây treo theo.
   syncDependencyPolicy:
     resolution: static-url
     timeout: none
     retry: none
     circuitBreaker: none
 
-  # topology — ref = "{kind}:{namespace}/{name}"
-  topology:  # optional -> table: service_dependency
-    # ── Membership ────────────────────────────────────────────────────────────
+  topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của system banking-system
 
-    # ── APIs ──────────────────────────────────────────────────────────────────
     - ref: providesApis:banking/accounts-api
       protocol: http
       reason: API /api/v1/accounts cho gateway định tuyến vào
@@ -86,7 +67,6 @@ spec:
       protocol: http
       reason: Kiểm tra bankId tồn tại trước khi lưu và phục vụ GET /accounts/banks/{bankId}
 
-    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
       protocol: http
       reason: Đăng ký instance với Eureka Server
@@ -103,28 +83,10 @@ spec:
       protocol: rabbitmq
       reason: Broker nhận log nghiệp vụ
 
-    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
       reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
 
-# ═════════════════════════════════════════════════════════════════════════════
-# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
-#
-#   c3 → C4Component  : các khối bên trong container
-#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
-#
-# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
-# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
-#
-# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
-# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
-# dependency graph.
-#
-# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
-# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
-# và blast_radius của những service khác bị tính sai theo.
-# ═════════════════════════════════════════════════════════════════════════════
 c3:
   diagramType: C4Component
   title: C3 — Thành phần bên trong Account Service
@@ -189,10 +151,10 @@ c4:
     database: banking-microservices
     schema: public
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+    sharedInstance: true
+    connectionPool: { maxConns: 10 }
 
   entities:
     - name: accounts
@@ -206,12 +168,9 @@ c4:
         - { name: account_type,   type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: CURRENT, DEPOSIT, CREDIT" }
         - { name: account_status, type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: ACTIVE, INACTIVE" }
         - { name: bank_id,        type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới banks.id, không có ràng buộc FK }
-      # Không có UNIQUE trên account_number, không CHECK cho enum, không index ngoài khoá chính.
       constraints: []
       indexes: []
 
-  # Quan hệ tới users và banks là quan hệ giữa các service, không phải quan hệ trong
-  # cùng một lược đồ — nên khai ở externalRelations dưới đây thay vì ở relations.
   relations: []
 
   externalRelations:

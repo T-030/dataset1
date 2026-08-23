@@ -1,27 +1,11 @@
-# discovery-client-service/catalog-info.yaml
-# Discovery Client Service — Eureka Server của hệ thống
-# Chức năng: giữ service registry, nhận đăng ký instance từ 7 service còn lại và trả
-# registry cho api-gateway-service phân giải các URI dạng lb://SERVICE-NAME
-#
-# LƯU Ý: bản khai cũ của file này mô tả một service khác hoàn toàn ("Client Application
-# Service" nhận đơn vay, gọi OCR / Config Server / Database Server v2). Những component
-# đó không tồn tại trong repo, và spec.id sai (`client-application-service`) khiến mọi
-# ref `component:banking/discovery-client-service` ở 7 service khác bị treo (dangling).
-# Nội dung dưới đây được viết lại theo mã nguồn thật.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
-  domain: platform  # require -> table: service.domain_code (VARCHAR 128)
+  domain: platform
 
-  # system — bounded context. service_key = "{system}.{spec.id}"
-  system: banking-system  # require -> table: service.system_code
+  system: banking-system
 
-  # namespace — K8s / IAM namespace scope
-  namespace: banking  # require -> table: service.namespace
+  namespace: banking
 
   labels:
     tier: "0"
@@ -34,15 +18,12 @@ metadata:
     dashboard: http://localhost:8761
 
 spec:
-  # type — service = binary HTTP/gRPC API, có API surface
-  type: service  # require -> table: service.service_type
+  type: service
 
-  # id — service_key = "banking-system.discovery-client-service"
-  id: discovery-client-service  # require -> table: service.service_key
+  id: discovery-client-service
 
-  name: Discovery Client Service  # require -> table: service.name
+  name: Discovery Client Service
 
-  # optional -> table: service.description
   description: >-
     Eureka Server (@EnableEurekaServer) giữ service registry của toàn hệ thống. Bản thân
     nó không đăng ký với ai (register-with-eureka=false, fetch-registry=false) và không
@@ -50,12 +31,12 @@ spec:
     phụ thuộc vào nó, docker-compose chặn chúng khởi động tới khi healthcheck :8761 xanh.
 
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
   review:
-    branch: "main"  # require để validate merge request
+    branch: "main"
 
   runtime:
     language: Java 21
@@ -65,46 +46,20 @@ spec:
     ports:
       - { number: 8761, name: http, protocol: http, exposure: cluster }
   dataClassification: internal
-  # Không có kho dữ liệu, không có secret. Actuator mở toàn bộ endpoint
-  # (management.endpoints.web.exposure.include=*) để docker-compose healthcheck /actuator/health.
   statePersistence: none
 
-  # topology — ref = "{kind}:{namespace}/{name}"
-  topology:  # optional -> table: service_dependency
-    # ── Membership ────────────────────────────────────────────────────────────
+  topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của system banking-system
 
-    # ── APIs ──────────────────────────────────────────────────────────────────
     - ref: providesApis:banking/eureka-api
       protocol: http
       reason: /eureka — nhận đăng ký instance và trả registry cho client
 
-  # Service không phụ thuộc vào bất kỳ service hay resource nào khác: nó là gốc của
-  # đồ thị phụ thuộc. Chiều đăng ký (7 service → Eureka) được khai ở phía các service đó.
-
-# ═════════════════════════════════════════════════════════════════════════════
-# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
-#
-#   c3 → C4Component  : các khối bên trong container
-#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
-#
-# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
-# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
-#
-# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
-# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
-# dependency graph.
-#
-# KHÔNG CÓ KHỐI c4: service không sở hữu cơ sở dữ liệu nào. Registry là cấu trúc
-# in-memory của Eureka, mất khi container restart.
-# ═════════════════════════════════════════════════════════════════════════════
 c3:
   diagramType: C4Component
   title: C3 — Thành phần bên trong Discovery Client Service
 
-  # Service chỉ gồm lớp khởi động và cấu hình; toàn bộ hành vi do starter Eureka Server
-  # cung cấp, repo không viết controller/service/repository nào.
   components:
     - id: eureka-server
       name: DiscoveryClientServiceApplication
@@ -127,5 +82,4 @@ c3:
     - { from: eureka-server, to: registry-store, description: Ghi và đọc bảng instance }
     - { from: eureka-server, to: actuator,       description: Công bố trạng thái sức khoẻ }
 
-  # Không có quan hệ đi ra: service này không gọi bất kỳ hệ thống nào.
   externalRelations: []

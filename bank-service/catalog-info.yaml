@@ -1,21 +1,11 @@
-# bank-service/catalog-info.yaml
-# Bank Service — quản lý ngân hàng và chi nhánh
-# Chức năng: CRUD ngân hàng/chi nhánh, cache Redis, phát log nghiệp vụ lên RabbitMQ và là
-# nguồn dữ liệu bank cho account-service, credit-card-service gọi vào
-# ─────────────────────────────────────────────────────────────────────────────
-
-# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
-  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+  domain: banking
 
-  # system — bounded context. service_key = "{system}.{spec.id}"
-  system: banking-system  # require -> table: service.system_code
+  system: banking-system
 
-  # namespace — K8s / IAM namespace scope
-  namespace: banking  # require -> table: service.namespace
+  namespace: banking
 
   labels:
     tier: "1"
@@ -27,15 +17,12 @@ metadata:
     port: "8082"
 
 spec:
-  # type — service = binary HTTP API, có API surface
-  type: service  # require -> table: service.service_type
+  type: service
 
-  # id — service_key = "banking-system.bank-service"
-  id: bank-service  # require -> table: service.service_key
+  id: bank-service
 
-  name: Bank Service  # require -> table: service.name
+  name: Bank Service
 
-  # optional -> table: service.description
   description: >-
     Quản lý dữ liệu chủ về ngân hàng và chi nhánh: tên, mã ngân hàng, mã chi nhánh, số
     tài khoản đầu mối và thông tin liên hệ. Không gọi service nào khác — đây là service
@@ -43,12 +30,12 @@ spec:
     bankId tồn tại trước khi lưu.
 
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
   review:
-    branch: "main"  # require để validate merge request
+    branch: "main"
 
   runtime:
     language: Java 21
@@ -59,18 +46,14 @@ spec:
       - { number: 8082, name: http, protocol: http, exposure: cluster }
   dataClassification: internal
 
-  # topology — ref = "{kind}:{namespace}/{name}"
-  topology:  # optional -> table: service_dependency
-    # ── Membership ────────────────────────────────────────────────────────────
+  topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của system banking-system
 
-    # ── APIs ──────────────────────────────────────────────────────────────────
     - ref: providesApis:banking/banks-api
       protocol: http
       reason: API /api/v1/banks cho gateway, account-service và credit-card-service
 
-    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
       protocol: http
       reason: Đăng ký instance với Eureka Server
@@ -87,28 +70,10 @@ spec:
       protocol: rabbitmq
       reason: Broker nhận log nghiệp vụ
 
-    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
       reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
 
-# ═════════════════════════════════════════════════════════════════════════════
-# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
-#
-#   c3 → C4Component  : các khối bên trong container
-#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
-#
-# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
-# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
-#
-# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
-# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
-# dependency graph.
-#
-# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
-# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
-# và blast_radius của những service khác bị tính sai theo.
-# ═════════════════════════════════════════════════════════════════════════════
 c3:
   diagramType: C4Component
   title: C3 — Thành phần bên trong Bank Service
@@ -161,10 +126,10 @@ c4:
     database: banking-microservices
     schema: public
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+    sharedInstance: true
+    connectionPool: { maxConns: 10 }
 
   entities:
     - name: banks
@@ -180,15 +145,11 @@ c4:
         - { name: address,        type: VARCHAR(250), nullable: false }
         - { name: email,          type: VARCHAR(250), nullable: false }
         - { name: phone_number,   type: VARCHAR(250), nullable: false }
-      # Không có UNIQUE trên bank_code/branch_code và không có index ngoài khoá chính.
       constraints: []
       indexes: []
 
-  # Không có quan hệ nội bộ: service chỉ sở hữu một bảng duy nhất.
   relations: []
 
   externalReaders:
-    # Hai service dưới đây KHÔNG đọc bảng banks trực tiếp — chúng gọi REST và giữ bankId
-    # như một khoá ngoài logic, không có ràng buộc FK ở tầng cơ sở dữ liệu.
     - { consumer: banking/account-service,     access: api-only, via: "GET /api/v1/banks/{bankId}" }
     - { consumer: banking/credit-card-service, access: api-only, via: "GET /api/v1/banks/{bankId}" }

@@ -1,21 +1,11 @@
-# api-gateway-service/catalog-info.yaml
-# API Gateway Service — lối vào duy nhất của hệ thống
-# Chức năng: định tuyến 6 nhóm đường dẫn /api/v1/** tới microservice tương ứng, phân giải
-# tên service qua Eureka và cân bằng tải bằng lb://
-# ─────────────────────────────────────────────────────────────────────────────
-
-# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
-  domain: platform  # require -> table: service.domain_code (VARCHAR 128)
+  domain: platform
 
-  # system — bounded context. service_key = "{system}.{spec.id}"
-  system: banking-system  # require -> table: service.system_code
+  system: banking-system
 
-  # namespace — K8s / IAM namespace scope
-  namespace: banking  # require -> table: service.namespace
+  namespace: banking
 
   labels:
     tier: "0"
@@ -27,15 +17,12 @@ metadata:
     port: "8087"
 
 spec:
-  # type — gateway = tầng định tuyến, không giữ nghiệp vụ và không sở hữu dữ liệu
-  type: gateway  # require -> table: service.service_type
+  type: gateway
 
-  # id — service_key = "banking-system.api-gateway-service"
-  id: api-gateway-service  # require -> table: service.service_key
+  id: api-gateway-service
 
-  name: API Gateway Service  # require -> table: service.name
+  name: API Gateway Service
 
-  # optional -> table: service.description
   description: >-
     Spring Cloud Gateway đứng trước toàn bộ microservice, là cổng duy nhất lộ ra ngoài
     (:8087). Sáu route khai bằng predicate Path trong application.properties, uri dạng
@@ -43,12 +30,12 @@ spec:
     rate limit hay circuit breaker — request được chuyển tiếp nguyên trạng.
 
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
   review:
-    branch: "main"  # require để validate merge request
+    branch: "main"
 
   runtime:
     language: Java 21
@@ -60,13 +47,10 @@ spec:
   dataClassification: internal
   statePersistence: none
 
-  # topology — ref = "{kind}:{namespace}/{name}"
-  topology:  # optional -> table: service_dependency
-    # ── Membership ────────────────────────────────────────────────────────────
+  topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của system banking-system
 
-    # ── APIs ──────────────────────────────────────────────────────────────────
     - ref: providesApis:banking/gateway-api
       protocol: http
       reason: Bề mặt HTTP công khai /api/v1/** cho client bên ngoài
@@ -99,32 +83,14 @@ spec:
       protocol: http
       reason: routes[5] Path=/api/v1/logs/** → lb://LOG-SERVICE
 
-    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
       protocol: http
       reason: Đăng ký chính nó và tra cứu registry cho mọi route lb://
 
-# ═════════════════════════════════════════════════════════════════════════════
-# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
-#
-#   c3 → C4Component  : các khối bên trong container
-#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
-#
-# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
-# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
-#
-# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
-# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
-# dependency graph.
-#
-# KHÔNG CÓ KHỐI c4: gateway không sở hữu cơ sở dữ liệu nào và không giữ state.
-# ═════════════════════════════════════════════════════════════════════════════
 c3:
   diagramType: C4Component
   title: C3 — Thành phần bên trong API Gateway Service
 
-  # Gateway không có tầng controller/service/repository. "Component" ở đây là 6 route khai
-  # trong application.properties, cộng discovery client dùng để phân giải lb://.
   components:
     - id: discovery-client
       name: EurekaDiscoveryClient

@@ -1,38 +1,11 @@
-# master-catalog.yaml
-# Bản khai cấp SYSTEM của hệ thống ngân hàng vi dịch vụ banking-system.
-# Vai trò kép:
-#   1. Chỉ mục — trỏ tới catalog-info.yaml của cả 8 service trong repo (mục catalogRefs)
-#   2. Nguồn dữ liệu dựng sơ đồ C1 (System Context) và C2 (Container)
-#
-# C3 (Component) và C4 (Class/Database) nằm ở cuối catalog-info.yaml của từng service.
-#
-# LƯU Ý 1: bộ nạp catalog nhận tên `master-catalog.yaml` là file catalog, nên file này
-# BẮT BUỘC hợp lệ theo lược đồ vsf-idp.io/v2 — nếu không, nó sinh lỗi trong parse_errors.
-# Vì vậy nó được khai như một component type=documentation của chính hệ thống.
-#
-# LƯU Ý 2: lược đồ vsf-idp.io/v2 KHÔNG có giá trị `system` trong danh sách type hợp lệ
-# (`type: system` bị reject với mã INVALID_TYPE và cả file bị bỏ qua). `documentation`
-# là giá trị đúng nghĩa cho một trang tài liệu/bản khai không có API surface; nếu bộ nạp
-# đang dùng từ chối `documentation` thì thay bằng `other`. Hệ quả của cả hai lựa chọn là
-# file này được đếm như một component thứ 9 trên sơ đồ. Muốn tránh hẳn thì đổi tên file
-# thành `SYSTEM.md` (hoặc bất cứ tên nào không nằm trong danh sách catalog.yaml /
-# catalog.yml / catalog-info.yaml / master-catalog.yaml) để agent không parse nó.
-# ─────────────────────────────────────────────────────────────────────────────
-
-# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
-  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+  domain: banking
 
-  # system — bounded context. service_key = "{system}.{spec.id}"
-  system: banking-system  # require -> table: service.system_code
+  system: banking-system
 
-  # namespace — K8s / IAM namespace scope. Repo này chỉ có một namespace duy nhất
-  # (`banking`, ứng với network banking-microservices-network trong docker-compose),
-  # nên bản khai cấp system cũng nằm trong namespace đó.
-  namespace: banking  # require -> table: service.namespace
+  namespace: banking
 
   labels:
     kind: system-declaration
@@ -42,44 +15,29 @@ metadata:
     version: "0.0.1-SNAPSHOT"
 
 spec:
-  # type — documentation = trang tài liệu / bản khai, KHÔNG có API surface
-  # → chỉ track trong catalog, không được khai providesApis
-  type: documentation  # require -> table: service.service_type
+  type: documentation
 
-  # id — service_key = "banking-system.banking-master-system"
-  id: banking-master-system  # require -> table: service.service_key
+  id: banking-master-system
 
-  name: Banking Microservices Master  # require -> table: service.name
+  name: Banking Microservices Master
 
-  # optional -> table: service.description
   description: >-
     Bản khai cấp hệ thống của nền tảng ngân hàng vi dịch vụ giả lập banking-system:
     chỉ mục catalog của 8 microservice, danh sách tác nhân, container, kho dữ liệu
     dùng chung và hàng đợi log. Là nguồn dữ liệu để dựng sơ đồ C1 và C2.
 
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
   review:
-    branch: "main"  # require để validate merge request
+    branch: "main"
 
-  topology:  # optional -> table: service_dependency
-    # ── Membership ────────────────────────────────────────────────────────────
+  topology:
     - ref: system:banking/banking-system
       reason: Bản khai cấp hệ thống của chính system banking-system
 
-# ═════════════════════════════════════════════════════════════════════════════
-# CHỈ MỤC CATALOG — đường dẫn tới bản khai của từng service trong repo
-# Mỗi file dưới đây chứa: khai catalog (vsf-idp.io/v2) + khối c3 + khối c4.
-#
-# QUY ƯỚC `tier` (phân loại biên tập, suy ra từ bán kính ảnh hưởng khi service chết,
-# không phải giá trị đọc được từ mã nguồn):
-#   "0" — hạ tầng đường dẫn chung: mất là cả hệ thống mất lối vào / mất discovery
-#   "1" — dữ liệu chủ (master data) mà service khác gọi đồng bộ qua Feign
-#   "2" — nghiệp vụ đứng cuối chuỗi, hỏng chỉ ảnh hưởng chính nó
-# ═════════════════════════════════════════════════════════════════════════════
 catalogRefs:
   - path: discovery-client-service/catalog-info.yaml
     serviceKey: banking-system.discovery-client-service
@@ -122,15 +80,8 @@ catalogRefs:
     type: service
     tier: "2"
 
-# namespaces — namespace THẬT của hệ thống. Repo triển khai bằng docker-compose trên
-# một network duy nhất nên chỉ có một namespace. Các `boundary` trong khối c2 bên dưới
-# là nhóm logic để đọc sơ đồ, KHÔNG phải namespace và không dùng trong ref.
 namespaces: [banking]
 
-# ═════════════════════════════════════════════════════════════════════════════
-# C1 — SYSTEM CONTEXT
-# Ai dùng hệ thống, hệ thống nói chuyện với ai bên ngoài.
-# ═════════════════════════════════════════════════════════════════════════════
 c1:
   diagramType: C4Context
   title: C1 — Bối cảnh hệ thống banking-system
@@ -154,25 +105,16 @@ c1:
       external: false
       containerCount: 8
 
-  # Hệ thống KHÔNG tích hợp với bất kỳ hệ thống bên ngoài nào: không cổng thanh toán,
-  # không nhà cung cấp SMS/email, không cơ quan quản lý. Mọi giao dịch đều là giả lập
-  # nội bộ. Giữ danh sách rỗng thay vì bịa tác nhân ngoài.
   externalSystems: []
 
   relations:
     - { from: api-consumer,       to: banking-system, description: Gọi CRUD user, bank, credit card, account, invoice, log, protocol: HTTP · :8087 }
     - { from: platform-engineer,  to: banking-system, description: Dựng cụm, kiểm tra registry và trạng thái service, protocol: docker-compose · HTTP }
 
-# ═════════════════════════════════════════════════════════════════════════════
-# C2 — CONTAINER
-# Các đơn vị triển khai độc lập bên trong system, và kho dữ liệu chúng dùng.
-# Mỗi container ứng với một mục trong catalogRefs ở trên.
-# ═════════════════════════════════════════════════════════════════════════════
 c2:
   diagramType: C4Container
   title: C2 — Container trong hệ thống banking-system
 
-  # boundaries — nhóm logic để đọc sơ đồ (xem ghi chú ở mục namespaces).
   boundaries:
     - { id: edge,     name: Edge — lối vào duy nhất }
     - { id: platform, name: Platform — discovery và log tập trung }
@@ -246,9 +188,6 @@ c2:
       catalog: log-service/catalog-info.yaml
 
   datastores:
-    # LƯU Ý KIẾN TRÚC: 5 service JPA dùng CHUNG một instance PostgreSQL và CHUNG một
-    # database `banking-microservices`. Không có schema riêng, không có FK giữa các bảng
-    # của service khác nhau — ranh giới dữ liệu chỉ do quy ước ở tầng ứng dụng.
     - id: banking/postgres-db
       name: PostgreSQL banking-microservices
       technology: postgres:latest · cổng 5433→5432
@@ -292,13 +231,12 @@ c2:
       ownedBy: banking/log-service
       readBy: []
 
-  # messageTopics — repo dùng RabbitMQ, không dùng Kafka. Một direct exchange duy nhất.
   messageTopics:
     - id: banking/logs.queue
       exchange: logs.exchange
       exchangeType: direct
       routingKey: logs.routingKey
-      durable: false  # new Queue(queueName, false) trong RabbitMQProducerConfiguration
+      durable: false
       producers:
         - banking/user-service
         - banking/bank-service
@@ -308,7 +246,6 @@ c2:
       consumers: [banking/log-service, banking/invoice-service]
 
   relations:
-    # ── Đăng ký / phân giải qua Eureka ────────────────────────────────────────
     - { from: banking/api-gateway-service,  to: banking/discovery-client-service, style: sync, protocol: HTTP, description: Đăng ký và lấy registry để phân giải lb:// }
     - { from: banking/user-service,         to: banking/discovery-client-service, style: sync, protocol: HTTP, description: Đăng ký instance }
     - { from: banking/bank-service,         to: banking/discovery-client-service, style: sync, protocol: HTTP, description: Đăng ký instance }
@@ -317,7 +254,6 @@ c2:
     - { from: banking/invoice-service,      to: banking/discovery-client-service, style: sync, protocol: HTTP, description: Đăng ký instance }
     - { from: banking/log-service,          to: banking/discovery-client-service, style: sync, protocol: HTTP, description: Đăng ký instance }
 
-    # ── Định tuyến từ gateway ─────────────────────────────────────────────────
     - { from: banking/api-gateway-service, to: banking/user-service,        style: sync, protocol: HTTP, description: "routes[0] /api/v1/users/** → lb://USER-SERVICE" }
     - { from: banking/api-gateway-service, to: banking/bank-service,        style: sync, protocol: HTTP, description: "routes[1] /api/v1/banks/** → lb://BANK-SERVICE" }
     - { from: banking/api-gateway-service, to: banking/credit-card-service, style: sync, protocol: HTTP, description: "routes[2] /api/v1/creditCards/** → lb://CREDIT-CARD-SERVICE" }
@@ -325,7 +261,6 @@ c2:
     - { from: banking/api-gateway-service, to: banking/invoice-service,     style: sync, protocol: HTTP, description: "routes[4] /api/v1/invoices/** → lb://INVOICE-SERVICE" }
     - { from: banking/api-gateway-service, to: banking/log-service,         style: sync, protocol: HTTP, description: "routes[5] /api/v1/logs/** → lb://LOG-SERVICE" }
 
-    # ── Gọi đồng bộ giữa các service (OpenFeign, URL tĩnh, KHÔNG qua Eureka) ──
     - { from: banking/account-service,     to: banking/user-service, style: sync, protocol: HTTP, description: "GET /api/v1/users/{userId} kiểm tra user tồn tại" }
     - { from: banking/account-service,     to: banking/bank-service, style: sync, protocol: HTTP, description: "GET /api/v1/banks/{bankId} kiểm tra bank tồn tại" }
     - { from: banking/credit-card-service, to: banking/user-service, style: sync, protocol: HTTP, description: "GET /api/v1/users/{userId} kiểm tra user tồn tại" }
@@ -335,7 +270,6 @@ c2:
     - { from: banking/invoice-service,     to: banking/credit-card-service, style: sync, protocol: HTTP, description: "GET /api/v1/creditCards/users/{userId} xác nhận khách hàng đã có thẻ" }
     - { from: banking/invoice-service,     to: banking/credit-card-service, style: sync, protocol: HTTP, description: GET /api/v1/creditCards rồi PUT /api/v1/creditCards để cộng dư nợ thẻ }
 
-    # ── Log bất đồng bộ ───────────────────────────────────────────────────────
     - { from: banking/user-service,        to: banking/logs.queue, style: async, protocol: AMQP, description: Phát log mỗi thao tác POST/PUT/DELETE/GET }
     - { from: banking/bank-service,        to: banking/logs.queue, style: async, protocol: AMQP, description: Phát log mỗi thao tác POST/PUT/DELETE/GET }
     - { from: banking/credit-card-service, to: banking/logs.queue, style: async, protocol: AMQP, description: Phát log mỗi thao tác POST/PUT/DELETE/GET }
@@ -344,7 +278,6 @@ c2:
     - { from: banking/logs.queue,          to: banking/log-service, style: async, protocol: AMQP, description: "@RabbitListener đọc và ghi thẳng xuống MongoDB" }
     - { from: banking/logs.queue,          to: banking/invoice-service, style: async, protocol: AMQP, description: "@RabbitListener đếm số thao tác hoá đơn" }
 
-    # ── Truy cập kho dữ liệu ──────────────────────────────────────────────────
     - { from: banking/user-service,        to: banking/postgres-db, style: sync, protocol: JDBC,          description: Bảng users }
     - { from: banking/bank-service,        to: banking/postgres-db, style: sync, protocol: JDBC,          description: Bảng banks }
     - { from: banking/credit-card-service, to: banking/postgres-db, style: sync, protocol: JDBC,          description: Bảng credit_cards, truy vấn tổng hợp và cập nhật trạng thái trên bảng invoices }
@@ -357,8 +290,6 @@ c2:
     - { from: banking/invoice-service,     to: banking/redis-db,    style: sync, protocol: RESP,          description: Cache invoice / invoices / invoice_user }
     - { from: banking/log-service,         to: banking/mongo,       style: sync, protocol: MongoDB Wire,  description: Collection logs }
 
-  # opsTools — mở rộng cục bộ của repo: các UI quản trị khai trong docker-compose.
-  # Không phải container ứng dụng, không có catalog riêng, chỉ chạm vào kho dữ liệu.
   opsTools:
     - { id: banking/pg-admin,      name: pgAdmin 4,           port: 5050,  targets: [banking/postgres-db] }
     - { id: banking/redis-insight, name: RedisInsight,        port: 5540,  targets: [banking/redis-db] }

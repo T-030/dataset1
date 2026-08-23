@@ -1,21 +1,11 @@
-# log-service/catalog-info.yaml
-# Log Service — thu thập log tập trung
-# Chức năng: tiêu thụ logs.queue bằng @RabbitListener, ghi thẳng xuống MongoDB và lộ
-# REST /api/v1/logs để tra cứu
-# ─────────────────────────────────────────────────────────────────────────────
-
-# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
-  domain: platform  # require -> table: service.domain_code (VARCHAR 128)
+  domain: platform
 
-  # system — bounded context. service_key = "{system}.{spec.id}"
-  system: banking-system  # require -> table: service.system_code
+  system: banking-system
 
-  # namespace — K8s / IAM namespace scope
-  namespace: banking  # require -> table: service.namespace
+  namespace: banking
 
   labels:
     tier: "2"
@@ -27,15 +17,12 @@ metadata:
     port: "8086"
 
 spec:
-  # type — service = binary HTTP API, có API surface (đồng thời là consumer của queue)
-  type: service  # require -> table: service.service_type
+  type: service
 
-  # id — service_key = "banking-system.log-service"
-  id: log-service  # require -> table: service.service_key
+  id: log-service
 
-  name: Log Service  # require -> table: service.name
+  name: Log Service
 
-  # optional -> table: service.description
   description: >-
     Điểm tập kết log của cả hệ thống. Năm service nghiệp vụ phát bản ghi log lên
     logs.exchange; service này lắng nghe logs.queue, ánh xạ LogResponse thành Log và lưu
@@ -43,12 +30,12 @@ spec:
     Là service duy nhất dùng MongoDB và là consumer duy nhất của hàng đợi.
 
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
   review:
-    branch: "main"  # require để validate merge request
+    branch: "main"
 
   runtime:
     language: Java 21
@@ -58,25 +45,19 @@ spec:
     ports:
       - { number: 8086, name: http, protocol: http, exposure: cluster }
   dataClassification: internal
-  # Không cache Redis, không PostgreSQL. Consumer không có dead-letter queue, không retry
-  # policy: message lỗi bị loại khỏi queue mà không lưu lại được ở đâu.
   consumerPolicy:
     concurrency: default
     deadLetterQueue: none
     retry: none
 
-  # topology — ref = "{kind}:{namespace}/{name}"
-  topology:  # optional -> table: service_dependency
-    # ── Membership ────────────────────────────────────────────────────────────
+  topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của system banking-system
 
-    # ── APIs ──────────────────────────────────────────────────────────────────
     - ref: providesApis:banking/logs-api
       protocol: http
       reason: API /api/v1/logs cho gateway định tuyến vào để tra cứu log
 
-    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
       protocol: http
       reason: Đăng ký instance với Eureka Server
@@ -89,34 +70,14 @@ spec:
       protocol: rabbitmq
       reason: Broker cung cấp hàng đợi log
 
-    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: consumesFrom:banking/logs.queue
       protocol: rabbitmq
       reason: Nhận log do 5 service nghiệp vụ phát lên và lưu xuống MongoDB
 
-# ═════════════════════════════════════════════════════════════════════════════
-# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
-#
-#   c3 → C4Component  : các khối bên trong container
-#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
-#
-# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
-# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
-#
-# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
-# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
-# dependency graph.
-#
-# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
-# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
-# và blast_radius của những service khác bị tính sai theo.
-# ═════════════════════════════════════════════════════════════════════════════
 c3:
   diagramType: C4Component
   title: C3 — Thành phần bên trong Log Service
 
-  # Lưu ý: `internalRelations` chỉ diễn tả chiều ĐI RA. Quan hệ logs.queue → LogConsumer
-  # là chiều đi vào nên khai ở topology (consumesFrom) và hiện trên C2.
   components:
     - id: log-controller
       name: LogController
@@ -156,15 +117,12 @@ c4:
   diagramType: classDiagram
   title: C4 — Mô hình dữ liệu Log Service
 
-  # Kho dữ liệu là MongoDB nên khai documentDatabase thay cho relationalDatabase.
   documentDatabase:
     engine: MongoDB (image mongo:latest)
     database: banking-microservices
     authenticationDatabase: admin
-    schemaEnforcement: none  # không có JSON schema validator, cấu trúc do @Document quyết định
+    schemaEnforcement: none
     encryptionAtRest: false
-    # Mặc định driver là 100 kết nối. Trong application.properties có sẵn một dòng comment
-    # ghi đè URI với maxPoolSize=1 để mô phỏng sự cố cạn kiệt connection pool.
     connectionPool: { maxConns: 100 }
 
   collections:
@@ -179,14 +137,11 @@ c4:
         - { name: message,        type: string,    nullable: true }
         - { name: timestamp,      type: date,      nullable: true, description: LocalDateTime do phía phát tự gán }
         - { name: exception,      type: string,    nullable: true, description: Rỗng với log thành công }
-      # Không có index ngoài _id: truy vấn theo service_name hay timestamp phải quét toàn bộ collection.
       indexes: []
-      # Không có TTL index và không có chính sách xoá — collection tăng vô hạn.
       retentionPolicy: null
 
   relations: []
 
-  # Nguồn ghi vào collection này, theo hai đường độc lập nhau.
   writers:
     - { producer: banking/user-service,        via: banking/logs.queue, path: LogConsumer }
     - { producer: banking/bank-service,        via: banking/logs.queue, path: LogConsumer }

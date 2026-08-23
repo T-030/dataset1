@@ -1,21 +1,11 @@
-# credit-card-service/catalog-info.yaml
-# Credit Card Service — quản lý thẻ tín dụng và dư nợ
-# Chức năng: CRUD thẻ tín dụng, kiểm tra userId/bankId tồn tại qua Feign trước khi lưu,
-# cache Redis, phát log nghiệp vụ lên RabbitMQ
-# ─────────────────────────────────────────────────────────────────────────────
-
-# specVersion — phiên bản schema của IDP catalog declaration. Cố định: vsf-idp.io/v2
 specVersion: vsf-idp.io/v2
 
 metadata:
-  # domain — domain nghiệp vụ chủ quản. Free-text, tối đa 128 ký tự.
-  domain: banking  # require -> table: service.domain_code (VARCHAR 128)
+  domain: banking
 
-  # system — bounded context. service_key = "{system}.{spec.id}"
-  system: banking-system  # require -> table: service.system_code
+  system: banking-system
 
-  # namespace — K8s / IAM namespace scope
-  namespace: banking  # require -> table: service.namespace
+  namespace: banking
 
   labels:
     tier: "2"
@@ -28,27 +18,24 @@ metadata:
     port: "8083"
 
 spec:
-  # type — service = binary HTTP API, có API surface
-  type: service  # require -> table: service.service_type
+  type: service
 
-  # id — service_key = "banking-system.credit-card-service"
-  id: credit-card-service  # require -> table: service.service_key
+  id: credit-card-service
 
-  name: Credit Card Service  # require -> table: service.name
+  name: Credit Card Service
 
-  # optional -> table: service.description
   description: >-
     Quản lý thẻ tín dụng: số thẻ, ngày hết hạn, CVV, hạn mức và dư nợ. Trước khi lưu, gọi
     đồng bộ User Service và Bank Service để chắc chắn userId và bankId tồn tại; ngoài ra
     lộ hai endpoint đọc xuyên service /users/{userId} và /banks/{bankId}.
 
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
 
   review:
-    branch: "main"  # require để validate merge request
+    branch: "main"
 
   runtime:
     language: Java 21
@@ -57,22 +44,17 @@ spec:
     libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-openfeign, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
     ports:
       - { number: 8083, name: http, protocol: http, exposure: cluster }
-  # dataClassification — bảng credit_cards giữ số thẻ và CVV dạng thô. Repo là môi trường
-  # giả lập, không có tuyên bố tuân thủ PCI-DSS nào; ghi nhận mức nhạy cảm để đánh giá rủi ro.
   dataClassification: restricted
   syncDependencyPolicy:
-    resolution: static-url  # @FeignClient(url = ...) — không qua Eureka, không cân bằng tải
+    resolution: static-url
     timeout: none
-    retry: "3 lần liên tiếp, không giãn cách"  # áp dụng cho lời gọi lấy hoá đơn
+    retry: "3 lần liên tiếp, không giãn cách"
     circuitBreaker: none
 
-  # topology — ref = "{kind}:{namespace}/{name}"
-  topology:  # optional -> table: service_dependency
-    # ── Membership ────────────────────────────────────────────────────────────
+  topology:
     - ref: system:banking/banking-system
       reason: Component này là một phần của system banking-system
 
-    # ── APIs ──────────────────────────────────────────────────────────────────
     - ref: providesApis:banking/credit-cards-api
       protocol: http
       reason: API /api/v1/creditCards cho gateway định tuyến vào
@@ -89,7 +71,6 @@ spec:
       protocol: http
       reason: Lấy hoá đơn của khách hàng để đặt dư nợ ban đầu lúc phát hành thẻ
 
-    # ── Infrastructure ────────────────────────────────────────────────────────
     - ref: component:banking/discovery-client-service
       protocol: http
       reason: Đăng ký instance với Eureka Server
@@ -106,28 +87,10 @@ spec:
       protocol: rabbitmq
       reason: Broker nhận log nghiệp vụ
 
-    # ── RabbitMQ queues ───────────────────────────────────────────────────────
     - ref: publishesTo:banking/logs.queue
       protocol: rabbitmq
       reason: Phát log mỗi thao tác POST/PUT/DELETE/GET qua logs.exchange
 
-# ═════════════════════════════════════════════════════════════════════════════
-# MÔ HÌNH C4 — hai cấp thuộc phạm vi service này
-#
-#   c3 → C4Component  : các khối bên trong container
-#   c4 → classDiagram : lược đồ cơ sở dữ liệu service sở hữu
-#
-# C1 (Context) và C2 (Container) mô tả quan hệ GIỮA các service nên không service
-# nào tự khai được — chúng nằm ở master-catalog.yaml tại gốc repo.
-#
-# Hai khoá c3/c4 là mở rộng cục bộ của repo, không thuộc lược đồ vsf-idp.io/v2.
-# Bộ nạp catalog chấp nhận chúng vì schema đặt extra="allow", và bỏ qua khi dựng
-# dependency graph.
-#
-# LƯU Ý KHI SỬA: file này là đầu vào của bộ dựng đồ thị. Một lỗi cú pháp YAML ở
-# bất kỳ đâu bên dưới cũng làm service biến mất khỏi đồ thị — mất node, mất cạnh,
-# và blast_radius của những service khác bị tính sai theo.
-# ═════════════════════════════════════════════════════════════════════════════
 c3:
   diagramType: C4Component
   title: C3 — Thành phần bên trong Credit Card Service
@@ -209,10 +172,10 @@ c4:
     database: banking-microservices
     schema: public
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+    sharedInstance: true
+    connectionPool: { maxConns: 10 }
 
   entities:
     - name: credit_cards
@@ -227,8 +190,6 @@ c4:
         - { name: credit_limit,    type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
         - { name: debt_amount,     type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
         - { name: bank_id,         type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới banks.id, không có ràng buộc FK }
-      # Không có UNIQUE trên card_number và không có index ngoài khoá chính.
-      # Ràng buộc bean validation không có tác dụng: javax.persistence.validation.mode = none.
       constraints: []
       indexes: []
 
@@ -238,8 +199,6 @@ c4:
     - { from: credit_cards.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
     - { from: credit_cards.bank_id, to: banking/bank-service, entity: banks, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
 
-  # foreignTables — bảng của service khác mà service này truy vấn trực tiếp trên
-  # cùng instance PostgreSQL, ngoài đường REST.
   foreignTables:
     - { table: invoices, owner: banking/invoice-service, access: read-write, mode: "aggregate_query + status_update", usedBy: outstanding-debt-repository }
 
