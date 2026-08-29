@@ -59,7 +59,7 @@ spec:
       - { number: 8085, name: http, protocol: http, exposure: cluster }
   dataClassification: internal
   syncDependencyPolicy:
-    resolution: static-url  # @FeignClient(url = ...) — không qua Eureka, không cân bằng tải
+    resolution: static-url
     timeout: none
     retry: none
     circuitBreaker: none
@@ -140,9 +140,9 @@ c3:
       name: InvoiceServiceImpl
       technology: Spring @Service · @Transactional · @Cacheable / @CachePut / @CacheEvict
       description: >-
-        Toàn bộ nghiệp vụ. save() chạy trong một transaction bao cả hai bước kiểm tra
-        từ xa, bước ghi Invoice, bước cập nhật dư nợ thẻ và bước phát log.
-        findAll() kiểm tra trạng thái người dùng cho từng hoá đơn trước khi trả về
+        Toàn bộ nghiệp vụ. save() thực hiện kiểm tra từ xa, ghi Invoice,
+        cập nhật dư nợ thẻ và phát log. findAll() kiểm tra trạng thái người dùng
+        cho từng hoá đơn trước khi trả về
     - id: invoice-mapper
       name: InvoiceMapper
       technology: MapStruct 1.5.5
@@ -154,13 +154,13 @@ c3:
     - id: user-service-client
       name: UserServiceClient
       technology: OpenFeign · url tĩnh http://${USER_SERVICE_HOST}:8081
-      description: GET /api/v1/users/{userId} — không timeout, không circuit breaker
+      description: GET /api/v1/users/{userId}
     - id: credit-card-service-client
       name: CreditCardServiceClient
       technology: OpenFeign · url tĩnh http://${CREDIT_CARD_SERVICE_HOST}:8083
       description: >-
-        GET /api/v1/creditCards/users/{userId} xác nhận khách hàng; GET /api/v1/creditCards
-        lấy toàn bộ thẻ để tìm thẻ của khách; PUT /api/v1/creditCards ghi lại thẻ với dư nợ mới
+        GET /api/v1/creditCards/users/{userId}, GET /api/v1/creditCards để tìm thẻ
+        của khách và PUT /api/v1/creditCards để ghi lại thẻ với dư nợ mới
     - id: invoice-audit-consumer
       name: InvoiceAuditConsumer
       technology: "@RabbitListener · logs.queue"
@@ -202,10 +202,10 @@ c4:
     database: banking-microservices
     schema: public
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+    sharedInstance: true
+    connectionPool: { maxConns: 10 }
 
   entities:
     - name: invoices
@@ -214,19 +214,18 @@ c4:
       columns:
         - { name: id,             type: BIGSERIAL,          key: PK, nullable: false }
         - { name: invoice_number, type: VARCHAR(20),        nullable: false }
-        - { name: user_id,        type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới users.id, không có ràng buộc FK }
-        - { name: amount,         type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
+        - { name: user_id,        type: BIGINT,             nullable: false, description: Khoá ngoại logic tới users.id }
+        - { name: amount,         type: "DOUBLE PRECISION", nullable: false, description: Số tiền hoá đơn }
         - { name: invoice_date,   type: DATE,               nullable: false }
         - { name: due_date,       type: DATE,               nullable: false }
-        - { name: payment_status, type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: PAID, PENDING, OVERDUE, FAILED, CANCELLED" }
-      # Không có UNIQUE trên invoice_number, không CHECK cho enum, không index ngoài khoá chính.
+        - { name: payment_status, type: VARCHAR(255),       nullable: false, description: "Enum: PAID, PENDING, OVERDUE, FAILED, CANCELLED" }
       constraints: []
       indexes: []
 
   relations: []
 
   externalRelations:
-    - { from: invoices.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+    - { from: invoices.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi }
 
   externalReaders:
     - { consumer: banking/credit-card-service, tables: [invoices], access: read-write, mode: "aggregate_query + status_update", via: JDBC }

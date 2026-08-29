@@ -161,15 +161,15 @@ c4:
     database: banking-microservices
     schema: public
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+    sharedInstance: true
+    connectionPool: { maxConns: 10 }
 
   entities:
     - name: banks
       stereotype: aggregate-root
-      description: Ngân hàng và chi nhánh, khoá ngoại logic của accounts và credit_cards
+      description: Ngân hàng và chi nhánh
       columns:
         - { name: id,             type: BIGSERIAL,    key: PK, nullable: false }
         - { name: bank_name,      type: VARCHAR(100), nullable: false }
@@ -180,15 +180,11 @@ c4:
         - { name: address,        type: VARCHAR(250), nullable: false }
         - { name: email,          type: VARCHAR(250), nullable: false }
         - { name: phone_number,   type: VARCHAR(250), nullable: false }
-      # Không có UNIQUE trên bank_code/branch_code và không có index ngoài khoá chính.
       constraints: []
       indexes: []
 
-  # Không có quan hệ nội bộ: service chỉ sở hữu một bảng duy nhất.
   relations: []
 
   externalReaders:
-    # Hai service dưới đây KHÔNG đọc bảng banks trực tiếp — chúng gọi REST và giữ bankId
-    # như một khoá ngoài logic, không có ràng buộc FK ở tầng cơ sở dữ liệu.
     - { consumer: banking/account-service,     access: api-only, via: "GET /api/v1/banks/{bankId}" }
     - { consumer: banking/credit-card-service, access: api-only, via: "GET /api/v1/banks/{bankId}" }

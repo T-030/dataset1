@@ -25,35 +25,21 @@ metadata:
     repo: https://github.com/emre-unaldi/Banking-Microservices
     defaultBranch: main
     port: "8081"
-    # spring.application.name = user-service-broken → instance đăng ký lên Eureka dưới
-    # tên USER-SERVICE-BROKEN, trong khi api-gateway-service định tuyến lb://USER-SERVICE.
-    # Ghi lại đúng hiện trạng để sơ đồ khớp thực tế chạy; ba service gọi Feign không bị
-    # ảnh hưởng vì chúng dùng URL tĩnh chứ không qua registry.
     eurekaAppName: user-service-broken
 
 spec:
-  # type — service = binary HTTP API, có API surface
-  type: service  # require -> table: service.service_type
-
-  # id — service_key = "banking-system.user-service"
-  id: user-service  # require -> table: service.service_key
-
-  name: User Service  # require -> table: service.name
-
-  # optional -> table: service.description
+  type: service
+  id: user-service
+  name: User Service
   description: >-
     Quản lý hồ sơ người dùng: tạo, sửa, xoá, tra cứu theo id và liệt kê. Mỗi thao tác đều
-    phát một bản ghi log lên logs.exchange. Là service bị phụ thuộc nhiều nhất — ba service
-    nghiệp vụ gọi GET /api/v1/users/{userId} đồng bộ trước khi lưu dữ liệu của chúng.
-
+    phát một bản ghi log lên logs.exchange. Cung cấp API GET /api/v1/users/{userId} cho các service khác.
   owners:
-    members:  # require at least 1 techlead -> table: service_member
+    members:
       - user: emree.unaldi@gmail.com
         role: techlead
-
   review:
-    branch: "main"  # require để validate merge request
-
+    branch: "main"
   runtime:
     language: Java 21
     framework: Spring Boot 3.2.4 / Spring Cloud 2023.0.1
@@ -61,8 +47,6 @@ spec:
     libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
     ports:
       - { number: 8081, name: http, protocol: http, exposure: cluster }
-  # dataClassification — bảng users chứa PII (email, số điện thoại, ngày sinh) và cột
-  # password lưu chuỗi thô 50 ký tự, không băm.
   dataClassification: confidential
 
   # topology — ref = "{kind}:{namespace}/{name}"
@@ -166,38 +150,32 @@ c4:
     engine: PostgreSQL (image postgres:latest)
     database: banking-microservices
     schema: public
-    # Không có Flyway/Liquibase. Lược đồ do Hibernate sinh lúc khởi động.
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    # HikariCP bị siết còn 1 kết nối, timeout 2 giây — chỉ một truy vấn chạy tại một thời điểm.
+    sharedInstance: true
     connectionPool: { maxConns: 1, connectionTimeoutMs: 2000 }
 
   entities:
     - name: users
       stereotype: aggregate-root
-      description: Hồ sơ người dùng, khoá ngoại logic của accounts, credit_cards và invoices
+      description: Hồ sơ người dùng
       columns:
         - { name: id,           type: BIGSERIAL,     key: PK, nullable: false }
         - { name: username,     type: VARCHAR(50),   nullable: false }
-        - { name: password,     type: VARCHAR(50),   nullable: false, sensitive: true, description: Lưu chuỗi thô, không băm, không mã hoá }
+        - { name: password,     type: VARCHAR(50),   nullable: false, sensitive: true, description: Mật khẩu người dùng }
         - { name: email,        type: VARCHAR(100),  nullable: false, pii: true }
         - { name: first_name,   type: VARCHAR(50),   nullable: false, pii: true }
         - { name: last_name,    type: VARCHAR(50),   nullable: false, pii: true }
-        - { name: phone_number, type: VARCHAR(255),  nullable: false, pii: true, description: Không khai length nên Hibernate lấy mặc định 255 }
+        - { name: phone_number, type: VARCHAR(255),  nullable: false, pii: true }
         - { name: birth_date,   type: DATE,          nullable: false, pii: true }
-        - { name: gender,       type: VARCHAR(255),  nullable: false, description: "Enum lưu dạng STRING: MALE, FEMALE" }
-      # Không có UNIQUE trên username/email và không có index ngoài khoá chính.
+        - { name: gender,       type: VARCHAR(255),  nullable: false, description: "Enum: MALE, FEMALE" }
       constraints: []
       indexes: []
 
-  # Không có quan hệ nội bộ: service chỉ sở hữu một bảng duy nhất.
   relations: []
 
   externalReaders:
-    # Ba service dưới đây KHÔNG đọc bảng users trực tiếp — chúng gọi REST và giữ userId
-    # như một khoá ngoài logic, không có ràng buộc FK ở tầng cơ sở dữ liệu.
     - { consumer: banking/account-service,     access: api-only, via: "GET /api/v1/users/{userId}" }
     - { consumer: banking/credit-card-service, access: api-only, via: "GET /api/v1/users/{userId}" }
     - { consumer: banking/invoice-service,     access: api-only, via: "GET /api/v1/users/{userId}" }

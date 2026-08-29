@@ -246,9 +246,6 @@ c2:
       catalog: log-service/catalog-info.yaml
 
   datastores:
-    # LƯU Ý KIẾN TRÚC: 5 service JPA dùng CHUNG một instance PostgreSQL và CHUNG một
-    # database `banking-microservices`. Không có schema riêng, không có FK giữa các bảng
-    # của service khác nhau — ranh giới dữ liệu chỉ do quy ước ở tầng ứng dụng.
     - id: banking/postgres-db
       name: PostgreSQL banking-microservices
       technology: postgres:latest · cổng 5433→5432

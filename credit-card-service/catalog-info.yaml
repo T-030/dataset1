@@ -57,13 +57,11 @@ spec:
     libraries: [spring-boot-starter-data-jpa, spring-boot-starter-data-redis, spring-boot-starter-amqp, spring-cloud-starter-openfeign, spring-cloud-starter-netflix-eureka-client, mapstruct-1.5.5, lombok]
     ports:
       - { number: 8083, name: http, protocol: http, exposure: cluster }
-  # dataClassification — bảng credit_cards giữ số thẻ và CVV dạng thô. Repo là môi trường
-  # giả lập, không có tuyên bố tuân thủ PCI-DSS nào; ghi nhận mức nhạy cảm để đánh giá rủi ro.
   dataClassification: restricted
   syncDependencyPolicy:
-    resolution: static-url  # @FeignClient(url = ...) — không qua Eureka, không cân bằng tải
+    resolution: static-url
     timeout: none
-    retry: "3 lần liên tiếp, không giãn cách"  # áp dụng cho lời gọi lấy hoá đơn
+    retry: "3 lần liên tiếp, không giãn cách"
     circuitBreaker: none
 
   # topology — ref = "{kind}:{namespace}/{name}"
@@ -153,17 +151,17 @@ c3:
     - id: user-service-client
       name: UserServiceClient
       technology: OpenFeign · url tĩnh http://${USER_SERVICE_HOST}:8081
-      description: GET /api/v1/users/{userId} — không timeout, không circuit breaker
+      description: GET /api/v1/users/{userId}
     - id: bank-service-client
       name: BankServiceClient
       technology: OpenFeign · url tĩnh http://${BANK_SERVICE_HOST}:8082
-      description: GET /api/v1/banks/{bankId} — không timeout, không circuit breaker
+      description: GET /api/v1/banks/{bankId}
     - id: invoice-service-client
       name: InvoiceServiceClient
       technology: OpenFeign · url tĩnh http://${INVOICE_SERVICE_HOST}:8085
       description: >-
         GET /api/v1/invoices — lấy danh sách hoá đơn rồi lọc theo userId ở phía gọi.
-        Thử lại tối đa 3 lần rồi trả về 0.0 nếu vẫn lỗi
+        Thử lại tối đa 3 lần rồi fallback trả về 0.0 nếu có lỗi
     - id: outstanding-debt-repository
       name: OutstandingDebtRepository
       technology: Spring JdbcTemplate · SQL thuần
@@ -209,10 +207,10 @@ c4:
     database: banking-microservices
     schema: public
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+    sharedInstance: true
+    connectionPool: { maxConns: 10 }
 
   entities:
     - name: credit_cards
@@ -220,26 +218,22 @@ c4:
       description: Thẻ tín dụng của một người dùng, phát hành bởi một ngân hàng
       columns:
         - { name: id,              type: BIGSERIAL,          key: PK, nullable: false }
-        - { name: card_number,     type: VARCHAR(20),        nullable: false, sensitive: true, description: Số thẻ lưu thô, không mã hoá, không che }
-        - { name: user_id,         type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới users.id, không có ràng buộc FK }
-        - { name: expiration_date, type: DATE,               nullable: false, description: Trường khai @Past trong entity, ngược nghĩa với ngày hết hạn }
-        - { name: cvv,             type: VARCHAR(4),         nullable: false, sensitive: true, description: CVV lưu thô — dữ liệu không được phép lưu trong hệ thống thật }
-        - { name: credit_limit,    type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
-        - { name: debt_amount,     type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số tiền, nên là NUMERIC }
-        - { name: bank_id,         type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới banks.id, không có ràng buộc FK }
-      # Không có UNIQUE trên card_number và không có index ngoài khoá chính.
-      # Ràng buộc bean validation không có tác dụng: javax.persistence.validation.mode = none.
+        - { name: card_number,     type: VARCHAR(20),        nullable: false, sensitive: true, description: Số thẻ tín dụng }
+        - { name: user_id,         type: BIGINT,             nullable: false, description: Mã người dùng }
+        - { name: expiration_date, type: DATE,               nullable: false, description: Ngày hết hạn thẻ }
+        - { name: cvv,             type: VARCHAR(4),         nullable: false, sensitive: true, description: Mã bảo mật CVV }
+        - { name: credit_limit,    type: "DOUBLE PRECISION", nullable: false, description: Hạn mức tín dụng }
+        - { name: debt_amount,     type: "DOUBLE PRECISION", nullable: false, description: Dư nợ hiện tại }
+        - { name: bank_id,         type: BIGINT,             nullable: false, description: Mã ngân hàng phát hành }
       constraints: []
       indexes: []
 
   relations: []
 
   externalRelations:
-    - { from: credit_cards.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
-    - { from: credit_cards.bank_id, to: banking/bank-service, entity: banks, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+    - { from: credit_cards.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi }
+    - { from: credit_cards.bank_id, to: banking/bank-service, entity: banks, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi }
 
-  # foreignTables — bảng của service khác mà service này truy vấn trực tiếp trên
-  # cùng instance PostgreSQL, ngoài đường REST.
   foreignTables:
     - { table: invoices, owner: banking/invoice-service, access: read-write, mode: "aggregate_query + status_update", usedBy: outstanding-debt-repository }
 

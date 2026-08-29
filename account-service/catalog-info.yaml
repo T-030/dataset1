@@ -58,9 +58,6 @@ spec:
     ports:
       - { number: 8084, name: http, protocol: http, exposure: cluster }
   dataClassification: internal
-  # Feign client trỏ URL tĩnh (@FeignClient(url = "http://${USER_SERVICE_HOST:localhost}:8081"))
-  # nên KHÔNG đi qua Eureka và KHÔNG có cân bằng tải. Không cấu hình timeout, retry hay
-  # circuit breaker: User/Bank Service chậm thì request tại đây treo theo.
   syncDependencyPolicy:
     resolution: static-url
     timeout: none
@@ -150,11 +147,11 @@ c3:
     - id: user-service-client
       name: UserServiceClient
       technology: OpenFeign · url tĩnh http://${USER_SERVICE_HOST}:8081
-      description: GET /api/v1/users/{userId} — không timeout, không circuit breaker
+      description: GET /api/v1/users/{userId}
     - id: bank-service-client
       name: BankServiceClient
       technology: OpenFeign · url tĩnh http://${BANK_SERVICE_HOST}:8082
-      description: GET /api/v1/banks/{bankId} — không timeout, không circuit breaker
+      description: GET /api/v1/banks/{bankId}
     - id: redis-cache
       name: RedisConfiguration
       technology: RedisCacheManager · TTL 1 giờ · prefix account-service
@@ -189,10 +186,10 @@ c4:
     database: banking-microservices
     schema: public
     migrationTool: none
-    runtimeSchemaMutation: true  # spring.jpa.hibernate.ddl-auto=update
+    runtimeSchemaMutation: true
     encryptionAtRest: false
-    sharedInstance: true  # dùng chung database với 4 service JPA còn lại
-    connectionPool: { maxConns: 10 }  # mặc định HikariCP, không ghi đè trong properties
+    sharedInstance: true
+    connectionPool: { maxConns: 10 }
 
   entities:
     - name: accounts
@@ -201,21 +198,18 @@ c4:
       columns:
         - { name: id,             type: BIGSERIAL,          key: PK, nullable: false }
         - { name: account_number, type: VARCHAR(20),        nullable: false }
-        - { name: user_id,        type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới users.id, không có ràng buộc FK }
-        - { name: balance,        type: "DOUBLE PRECISION", nullable: false, description: Kiểu Double — không phù hợp cho số dư tiền tệ, nên là NUMERIC }
-        - { name: account_type,   type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: CURRENT, DEPOSIT, CREDIT" }
-        - { name: account_status, type: VARCHAR(255),       nullable: false, description: "Enum lưu dạng STRING: ACTIVE, INACTIVE" }
-        - { name: bank_id,        type: BIGINT,             nullable: false, description: Khoá ngoài LOGIC tới banks.id, không có ràng buộc FK }
-      # Không có UNIQUE trên account_number, không CHECK cho enum, không index ngoài khoá chính.
+        - { name: user_id,        type: BIGINT,             nullable: false, description: Khoá ngoại logic tới users.id }
+        - { name: balance,        type: "DOUBLE PRECISION", nullable: false, description: Số dư tài khoản }
+        - { name: account_type,   type: VARCHAR(255),       nullable: false, description: "Enum: CURRENT, DEPOSIT, CREDIT" }
+        - { name: account_status, type: VARCHAR(255),       nullable: false, description: "Enum: ACTIVE, INACTIVE" }
+        - { name: bank_id,        type: BIGINT,             nullable: false, description: Khoá ngoại logic tới banks.id }
       constraints: []
       indexes: []
 
-  # Quan hệ tới users và banks là quan hệ giữa các service, không phải quan hệ trong
-  # cùng một lược đồ — nên khai ở externalRelations dưới đây thay vì ở relations.
   relations: []
 
   externalRelations:
-    - { from: accounts.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
-    - { from: accounts.bank_id, to: banking/bank-service, entity: banks, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi, không ràng buộc ở CSDL }
+    - { from: accounts.user_id, to: banking/user-service, entity: users, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi }
+    - { from: accounts.bank_id, to: banking/bank-service, entity: banks, cardinality: "*..1", fk: null, enforcedBy: application, description: Kiểm tra tồn tại bằng Feign lúc ghi }
 
   externalReaders: []
